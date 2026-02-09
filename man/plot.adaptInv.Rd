@@ -6,8 +6,6 @@
 \usage{
 \method{plot}{adaptInv}(
   x,
-  xlab = "Resident",
-  ylab = "Invader",
   res_variant = 1,
   inv_variant = 2,
   repl = 1,
@@ -23,18 +21,14 @@
   auto_col = TRUE,
   auto_lty = TRUE,
   auto_title = FALSE,
+  auto_axis = FALSE,
+  auto_axis_ticks = 5,
   ...
 )
 }
 \arguments{
 \item{x}{An \code{adaptInv} object, created with function
 \code{\link{invade3}()}.}
-
-\item{xlab}{The x axis label forthe contour plot. Defaults to
-\code{Resident}.}
-
-\item{ylab}{The y axis label forthe contour plot. Defaults to
-\code{Invader}.}
 
 \item{res_variant}{The number of the variant representing the resident
 subpopulation.}
@@ -89,6 +83,15 @@ reverts to \code{FALSE} if any setting for \code{lty} is given. Used only if
 plot. The plot is composed of the concatenated population and patch names.
 Defaults to \code{FALSE}. Used only if \code{pip = FALSE}.}
 
+\item{auto_axis}{A logical value indicating if the axis labels should be set
+as the first variable variable in the input trait axis in the given
+\code{adaptInv} object for PIPs. Defaults to \code{FALSE}.}
+
+\item{auto_axis_ticks}{A single integer value giving the number of ticks to
+include on both axes of a PIP or on the x axis of an elasticity plot, if
+\code{auto_axis = TRUE}. Defaults to \code{5}, or to the number of variants
+in the used trait axis, whichever is smaller.}
+
 \item{...}{Other parameters used by functions \code{plot.default()}.}
 }
 \value{
@@ -96,18 +99,20 @@ A contour plot showing the overall fitness dynamics of the invader
 variant, assuming a pairwise invasibility analysis.
 }
 \description{
-Function \code{plot.adaptInv} plots pairwise invasibility contour plots. This
-function is based on code derived from Roff's Modeling Evolution: An
-Introduction to Numerical Methods (2010, Oxford University Press).
+Function \code{plot.adaptInv} plots pairwise invasibility contour plots,
+diagnostic population plots, and elasticity plot. This function is based on
+code derived from Roff's Modeling Evolution: An Introduction to Numerical
+Methods (2010, Oxford University Press).
 }
 \section{Notes}{
 
 By default, function \code{plot.adaptInv} produces a filled contour plot in
 which grey regions show where the invader has positive fitness relative to
 the resident, and white regions show where the invader has negative fitness
-relative to the resident. Fitness here refers to the Lyapunov coefficient,
-calculated over the final \code{fitness_times} in the original call to
-function \code{\link{invade3}()}.
+relative to the resident. Fitness here refers to the Lyapunov coefficient of
+the invader relative to the resident, calculated over the final
+\code{fitness_times} in the original call to function
+\code{\link{invade3}()}.
 }
 
 \examples{

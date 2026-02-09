@@ -7,6 +7,9 @@
 #' @param x An \code{adaptProj} object.
 #' @param repl The replicate to plot. Defaults to \code{1}, in which case the
 #' first replicate is plotted.
+#' @param agg_only A logical value indicating whether to plot only the aggregate
+#' community density. Defaults to \code{FALSE}, in which case population sizes
+#' of all constituent populations are also plotted.
 #' @param auto_ylim A logical value indicating whether the maximum of the y axis
 #' should be determined automatically. Defaults to \code{TRUE}, but reverts to
 #' \code{FALSE} if any setting for \code{ylim} is given.
@@ -16,6 +19,9 @@
 #' @param auto_lty A logical value indicating whether to shift the line type
 #' associated with each replicate automatically. Defaults to \code{TRUE}, but
 #' reverts to \code{FALSE} if any setting for \code{lty} is given.
+#' @param auto_lwd A logical value indicating whether to shift the line width
+#' associated with each density trend automatically. Defaults to \code{TRUE},
+#' but reverts to \code{FALSE} if any setting for \code{lwd} is given.
 #' @param auto_title A logical value indicating whether to add a title to each
 #' plot. The plot is composed of the concatenated population and patch names.
 #' Defaults to \code{FALSE}.
@@ -103,12 +109,14 @@
 #' plot(cyp_comm_proj, lwd = 2, bty = "n")
 #' 
 #' @export
-plot.adaptProj <- function(x, repl = 1, auto_ylim = TRUE, auto_col = TRUE,
-  auto_lty = TRUE, auto_title = FALSE, ...) {
+plot.adaptProj <- function(x, repl = 1, agg_only = FALSE, auto_ylim = TRUE,
+  auto_col = TRUE, auto_lty = TRUE, auto_lwd = TRUE, auto_title = FALSE, ...) {
   
   used_N_mat <- NULL
   appended <- FALSE
   num_pops <- 0
+  
+  core_lwd <- 1
   
   further_args <- list(...)
   
@@ -128,6 +136,9 @@ plot.adaptProj <- function(x, repl = 1, auto_ylim = TRUE, auto_col = TRUE,
   }
   if (is.element("main", names(further_args))) {
     auto_title <- FALSE
+  }
+  if (is.element("lwd", names(further_args))) {
+    auto_lwd <- FALSE
   }
   basal_args <- further_args
   
@@ -149,13 +160,13 @@ plot.adaptProj <- function(x, repl = 1, auto_ylim = TRUE, auto_col = TRUE,
     further_args$main <- used_string
   }
   
-  used_N_mat <- x$N_out[[repl]]
+  used_agg_mat <- x$agg_density
   
   used_col <- 1
   used_lty <- 1
   
   if (auto_ylim) {
-    further_args$ylim <- c(0, max(used_N_mat, na.rm = TRUE))
+    further_args$ylim <- c(0, max(used_agg_mat, na.rm = TRUE))
   }
   
   if (auto_col) {
@@ -165,15 +176,27 @@ plot.adaptProj <- function(x, repl = 1, auto_ylim = TRUE, auto_col = TRUE,
   if (auto_lty) {
     further_args$lty <- used_lty
   }
+  if (auto_lwd) {
+    further_args$lwd <- core_lwd + 1
+  }
   
-  num_pops <- dim(used_N_mat)[1]
-  c_xy <- xy.coords(x = c(1:length(used_N_mat[1,])), y = used_N_mat[1,])
+  current_agg <- used_agg_mat[repl,]
+  c_xy <- xy.coords(x = c(1:length(current_agg)), y = current_agg)
   further_args$x <- c_xy
   
   do.call("plot.default", further_args)
   
-  if (num_pops > 1) {
-    for (j in c(2:num_pops)) {
+  if (!agg_only) {
+    used_N_mat <- x$N_out[[repl]]
+    
+    num_pops <- dim(used_N_mat)[1]
+    c_xy <- xy.coords(x = c(1:length(used_N_mat[1,])), y = used_N_mat[1,])
+    further_args$x <- c_xy
+    
+    for (j in c(1:num_pops)) {
+      if (auto_lwd) {
+        further_args$lwd <- core_lwd
+      }
       if (auto_lty) {
         used_lty <- used_lty + 1;
         basal_args$lty <- used_lty
@@ -195,18 +218,15 @@ plot.adaptProj <- function(x, repl = 1, auto_ylim = TRUE, auto_col = TRUE,
 
 #' Create Contour Plot of Pairwise Invasibility Analysis Results
 #' 
-#' Function \code{plot.adaptInv} plots pairwise invasibility contour plots. This
-#' function is based on code derived from Roff's Modeling Evolution: An
-#' Introduction to Numerical Methods (2010, Oxford University Press).
+#' Function \code{plot.adaptInv} plots pairwise invasibility contour plots,
+#' diagnostic population plots, and elasticity plot. This function is based on
+#' code derived from Roff's Modeling Evolution: An Introduction to Numerical
+#' Methods (2010, Oxford University Press).
 #' 
 #' @name plot.adaptInv
 #' 
 #' @param x An \code{adaptInv} object, created with function
 #' \code{\link{invade3}()}.
-#' @param xlab The x axis label forthe contour plot. Defaults to
-#' \code{Resident}.
-#' @param ylab The y axis label forthe contour plot. Defaults to
-#' \code{Invader}.
 #' @param res_variant The number of the variant representing the resident
 #' subpopulation.
 #' @param inv_variant The number of the variant representing the mutant
@@ -245,6 +265,13 @@ plot.adaptProj <- function(x, repl = 1, auto_ylim = TRUE, auto_col = TRUE,
 #' @param auto_title A logical value indicating whether to add a title to each
 #' plot. The plot is composed of the concatenated population and patch names.
 #' Defaults to \code{FALSE}. Used only if \code{pip = FALSE}.
+#' @param auto_axis A logical value indicating if the axis labels should be set
+#' as the first variable variable in the input trait axis in the given
+#' \code{adaptInv} object for PIPs. Defaults to \code{FALSE}.
+#' @param auto_axis_ticks A single integer value giving the number of ticks to
+#' include on both axes of a PIP or on the x axis of an elasticity plot, if
+#' \code{auto_axis = TRUE}. Defaults to \code{5}, or to the number of variants
+#' in the used trait axis, whichever is smaller.
 #' @param ... Other parameters used by functions \code{plot.default()}.
 #' 
 #' @return A contour plot showing the overall fitness dynamics of the invader
@@ -254,9 +281,10 @@ plot.adaptProj <- function(x, repl = 1, auto_ylim = TRUE, auto_col = TRUE,
 #' By default, function \code{plot.adaptInv} produces a filled contour plot in
 #' which grey regions show where the invader has positive fitness relative to
 #' the resident, and white regions show where the invader has negative fitness
-#' relative to the resident. Fitness here refers to the Lyapunov coefficient,
-#' calculated over the final \code{fitness_times} in the original call to
-#' function \code{\link{invade3}()}.
+#' relative to the resident. Fitness here refers to the Lyapunov coefficient of
+#' the invader relative to the resident, calculated over the final
+#' \code{fitness_times} in the original call to function
+#' \code{\link{invade3}()}.
 #' 
 #' @examples
 #' library(lefko3)
@@ -325,15 +353,18 @@ plot.adaptProj <- function(x, repl = 1, auto_ylim = TRUE, auto_col = TRUE,
 #' plot(cyp_inv)
 #' 
 #' @export
-plot.adaptInv <- function(x, xlab = "Resident", ylab = "Invader",
-  res_variant = 1, inv_variant = 2, repl = 1, pip = TRUE, elast = FALSE,
-  run = 1, filled = TRUE, plot.title, plot.axes, axes = TRUE, frame.plot = TRUE,
-  auto_ylim = TRUE, auto_col = TRUE, auto_lty = TRUE, auto_title = FALSE, ...) {
+plot.adaptInv <- function(x, res_variant = 1, inv_variant = 2, repl = 1,
+  pip = TRUE, elast = FALSE, run = 1, filled = TRUE, plot.title, plot.axes,
+  axes = TRUE, frame.plot = TRUE, auto_ylim = TRUE, auto_col = TRUE,
+  auto_lty = TRUE, auto_title = FALSE, auto_axis = FALSE,
+  auto_axis_ticks = 5, ...) {
   
   asp <- NA
   las <- 1
   xaxs <- yaxs <- "i"
-  xlab <- ylab <- NULL
+  xlab <- ylab <- used_trait <- used_trait_res <- used_trait_inv <- NULL
+  used_trait_axis <- used_trait_spectrum <- NULL
+  elast_args <- list()
   chosen_colours <- c("white", "darkgrey")
   
   if (!axes) frame.plot <- FALSE
@@ -440,6 +471,10 @@ plot.adaptInv <- function(x, xlab = "Resident", ylab = "Invader",
     }
   }
   
+  if (!is.element("trait_axis", names(x))) {
+    stop("Argument x does not appear to be an adaptInv object.", call. = FALSE)
+  }
+  
   if (pip) {
     if (is.element("las", found_terms)) las <- further_args$las
     if (is.element("xaxs", found_terms)) xaxs <- further_args$xaxs
@@ -448,10 +483,10 @@ plot.adaptInv <- function(x, xlab = "Resident", ylab = "Invader",
     
     if (is.element("xlab", found_terms)) {
       xlab <- further_args$xlab
-    } else xlab <- "Resident Value"
+    } else xlab <- "Resident Variant"
     if (is.element("ylab", found_terms)) {
       ylab <- further_args$ylab
-    } else ylab <- "Invader Value"
+    } else ylab <- "Invader Variant"
     
     if (is.element("col", found_terms)) {
       found_colours <- further_args$col
@@ -483,6 +518,44 @@ plot.adaptInv <- function(x, xlab = "Resident", ylab = "Invader",
       stop("Replicate entered in argument repl could not be found.", call. = FALSE)
     }
     
+    used_trait_axis <- x$trait_axis
+    
+    if (auto_axis[1]) {
+      var_vector <- c(stats::var(used_trait_axis$givenrate), stats::var(used_trait_axis$offset),
+        stats::var(used_trait_axis$multiplier), NA, NA, stats::var(used_trait_axis$surv_dev),
+        stats::var(used_trait_axis$obs_dev), stats::var(used_trait_axis$size_dev),
+        stats::var(used_trait_axis$sizeb_dev), stats::var(used_trait_axis$sizec_dev),
+        stats::var(used_trait_axis$repst_dev), stats::var(used_trait_axis$fec_dev),
+        stats::var(used_trait_axis$jsurv_dev), stats::var(used_trait_axis$jobs_dev),
+        stats::var(used_trait_axis$jsize_dev), stats::var(used_trait_axis$jsizeb_dev),
+        stats::var(used_trait_axis$jsizec_dev), stats::var(used_trait_axis$jrepst_dev),
+        stats::var(used_trait_axis$jmatst_dev), stats::var(used_trait_axis$indcova),
+        stats::var(used_trait_axis$indcovb), stats::var(used_trait_axis$indcovc))
+      
+      likely_candidates <- which(var_vector != 0)
+      
+      if (length(likely_candidates) > 0) {
+        best_candidate <- likely_candidates[1]
+        
+        all_possibilities <- c("(Given Rate Value)", "(Additive Offset Value)",
+          "(Multiplier Value)", NA, NA, "(Deviation to Intercept of Survival)",
+          "(Deviation to Intercept of Observation)", "(Deviation to Intercept of Primary Size)",
+          "(Deviation to Intercept of Secondary Size)", "(Deviation to Intercept of Tertiary Size)",
+          "(Deviation to Intercept of Reproductive Status)", "(Deviation to Intercept of Fecundity)",
+          "(Deviation to Intercept of Juvenile Survival)", "(Deviation to Intercept of Juvenile Observation)",
+          "(Deviation to Intercept of Juvenile Primary Size)", "(Deviation to Intercept of Juvenile Secondary Size)",
+          "(Deviation to Intercept of Juvenile Tertiary Size)", "(Deviation to Intercept of Juvenile Reproductive Status)",
+          "(Deviation to Intercept of Maturity Status)", "(Deviation to Individual Covariate A)",
+          "(Deviation to Individual Covariate B)", "(Deviation to Individual Covariate C)")
+        
+        used_trait <- all_possibilities[best_candidate]
+        used_trait_res <- paste(xlab, used_trait)
+        used_trait_inv <- paste(ylab, used_trait)
+        
+        used_trait_spectrum <- used_trait_axis[, best_candidate + 11]
+      }
+    }
+      
     res_column <- which(names(x$fitness) == fit_var_name_res)[1]
     resfit_column <- which(names(x$fitness) == fit_var_name_fitres)[1]
     inv_column <- which(names(x$fitness) == fit_var_name_inv)[1]
@@ -513,7 +586,12 @@ plot.adaptInv <- function(x, xlab = "Resident", ylab = "Invader",
     on.exit(par(par.orig))
     
     if (!filled) {
-      contour(unique_variants, unique_variants, ifmat, col = "black")
+      if (!auto_axis[1]) {
+        contour(unique_variants, unique_variants, ifmat, col = "black")
+      } else {
+        contour(unique_variants, unique_variants, ifmat, col = "black")
+      }
+      
     } else {
       w <- (3 + mar.orig[2L]) * par("csi") * 2.54
       layout(matrix(c(2, 1), ncol = 2L), widths = c(1, lcm(w)))
@@ -533,9 +611,29 @@ plot.adaptInv <- function(x, xlab = "Resident", ylab = "Invader",
     
     if (missing(plot.axes)) {
       if (axes) {
-        title(main = "", xlab = "", ylab = "")
-        Axis(unique_variants, side = 1)
-        Axis(unique_variants, side = 2)
+        if (auto_axis[1]) {
+          title(main = "", xlab = used_trait_res, ylab = used_trait_inv)
+          
+          found_length_of_range <- length(used_trait_spectrum)
+          
+          if (found_length_of_range < auto_axis_ticks) auto_axis_ticks <- found_length_of_range
+          
+          range_of_spectrum <- round(seq(from = min(used_trait_spectrum),
+            to = max(used_trait_spectrum), length.out = auto_axis_ticks),
+            digits = 3)
+          
+          at_range_of_spectrum <- seq(from = 1, to = found_length_of_range,
+            length.out = auto_axis_ticks)
+          
+          Axis(unique_variants, unique_variants, side = 1,
+            at = at_range_of_spectrum, labels = range_of_spectrum)
+          Axis(unique_variants, unique_variants, side = 2,
+            at = at_range_of_spectrum, labels = range_of_spectrum)
+        } else {
+          title(main = "", xlab = "", ylab = "")
+          Axis(unique_variants, side = 1)
+          Axis(unique_variants, side = 2)
+        }
       }
     }
     else plot.axes
@@ -546,7 +644,11 @@ plot.adaptInv <- function(x, xlab = "Resident", ylab = "Invader",
   }
   
   if (elast) {
-    if (!exists("optim", x)) {
+    if (!is.element("optim", names(x))) {
+      stop("No optimization data included in object.", call. = FALSE)
+    }
+    
+    if (!is.element("fitness", names(x$optim))) {
       stop("No optimization data included in object.", call. = FALSE)
     }
     
@@ -576,8 +678,8 @@ plot.adaptInv <- function(x, xlab = "Resident", ylab = "Invader",
     if (!is.element("ylab", names(further_args))) {
       further_args$ylab <- "Invader fitness"
     }
-    if (!is.element("xlab", names(further_args))) {
-      further_args$xlab <- "Trait value"
+    if (!is.element("xlab", names(further_args)) & !auto_axis[1]) {
+      further_args$xlab <- "Variant"
     }
     
     used_col <- 1
@@ -604,10 +706,66 @@ plot.adaptInv <- function(x, xlab = "Resident", ylab = "Invader",
       further_args$lty <- used_lty
     }
     
+    used_trait_axis <- x$trait_axis
+    
+    if (auto_axis[1]) {
+      var_vector <- c(stats::var(used_trait_axis$givenrate), stats::var(used_trait_axis$offset),
+        stats::var(used_trait_axis$multiplier), NA, NA, stats::var(used_trait_axis$surv_dev),
+        stats::var(used_trait_axis$obs_dev), stats::var(used_trait_axis$size_dev),
+        stats::var(used_trait_axis$sizeb_dev), stats::var(used_trait_axis$sizec_dev),
+        stats::var(used_trait_axis$repst_dev), stats::var(used_trait_axis$fec_dev),
+        stats::var(used_trait_axis$jsurv_dev), stats::var(used_trait_axis$jobs_dev),
+        stats::var(used_trait_axis$jsize_dev), stats::var(used_trait_axis$jsizeb_dev),
+        stats::var(used_trait_axis$jsizec_dev), stats::var(used_trait_axis$jrepst_dev),
+        stats::var(used_trait_axis$jmatst_dev), stats::var(used_trait_axis$indcova),
+        stats::var(used_trait_axis$indcovb), stats::var(used_trait_axis$indcovc))
+      
+      likely_candidates <- which(var_vector != 0)
+      
+      if (length(likely_candidates) > 0) {
+        best_candidate <- likely_candidates[1]
+        
+        all_possibilities <- c("Given Rate Value", "Additive Offset Value",
+          "Multiplier Value", NA, NA, "Deviation to Intercept of Survival",
+          "Deviation to Intercept of Observation", "Deviation to Intercept of Primary Size",
+          "Deviation to Intercept of Secondary Size", "Deviation to Intercept of Tertiary Size",
+          "Deviation to Intercept of Reproductive Status", "Deviation to Intercept of Fecundity",
+          "Deviation to Intercept of Juvenile Survival", "Deviation to Intercept of Juvenile Observation",
+          "Deviation to Intercept of Juvenile Primary Size", "Deviation to Intercept of Juvenile Secondary Size",
+          "Deviation to Intercept of Juvenile Tertiary Size", "Deviation to Intercept of Juvenile Reproductive Status",
+          "Deviation to Intercept of Maturity Status", "Deviation to Individual Covariate A",
+          "Deviation to Individual Covariate B", "Deviation to Individual Covariate C")
+        
+        used_trait <- all_possibilities[best_candidate]
+        
+        used_trait_spectrum <- used_trait_axis[, best_candidate + 11]
+      }
+      
+      if (!is.element("xlab", names(further_args))) {
+        found_length_of_range <- length(used_trait_spectrum)
+        
+        if (found_length_of_range < auto_axis_ticks) auto_axis_ticks <- found_length_of_range
+        
+        range_of_spectrum <- round(seq(from = min(used_trait_spectrum),
+          to = max(used_trait_spectrum), length.out = auto_axis_ticks),
+          digits = 3)
+        
+        at_range_of_spectrum <- seq(from = 1, to = found_length_of_range,
+          length.out = auto_axis_ticks)
+        
+        further_args$xaxt = "n"
+        further_args$xlab <- used_trait
+        elast_args$side <- 1
+        elast_args$at <- at_range_of_spectrum
+        elast_args$labels <- range_of_spectrum
+      }
+    }
+      
     c_xy <- xy.coords(x = c(1:length(used_fitness)), y = used_fitness)
     further_args$x <- c_xy
     
     do.call("plot.default", further_args)
+    if (auto_axis[1]) do.call("axis", elast_args)
     
     basal_args$x <- c(1:length(used_fitness))
     basal_args$y <- rep(0, length(used_fitness))

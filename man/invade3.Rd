@@ -2,7 +2,7 @@
 % Please edit documentation in R/RcppExports.R
 \name{invade3}
 \alias{invade3}
-\title{Run Pairwise and Multiple Invasion Analysis}
+\title{Run Pairwise and Multiple Invasibility Analysis}
 \usage{
 invade3(
   axis = NULL,
@@ -78,7 +78,7 @@ element giving the effect of an individual of that age, stage, age-stage, or
 stage-pair, depending on whether the MPM is age-based, ahistorical
 stage-based, age-by-stage, or historical stage-based, respectively. Numeric
 entries used in these vectors can be thought of as Lotka-Volterra
-interaction terms, such as are used in multiple species competition models.}
+competition terms, such as are used in multiple species competition models.}
 
 \item{starts}{An optional \code{lefkoSV} object, which is a data frame
 providing the starting numbers of individuals of each stage. If not
@@ -93,7 +93,7 @@ years in argument \code{mpm} or argument \code{vrm}.}
 used during invasion analysis. Defaults to the population-level set or the
 first patch, depending on whether the former exists.}
 
-\item{tweights}{An optional numeric vector or matrice denoting the
+\item{tweights}{An optional numeric vector or matrix denoting the
 probabilities of choosing each matrix in each MPM in a stochastic
 projection. If a matrix, then a first-order Markovian environment is
 assumed, in which the probability of choosing a specific annual matrix
@@ -129,26 +129,30 @@ data frame must be set to \code{0} (use of \code{NA} will produce errors).
 If the number of rows is less than \code{times}, then these values will be
 cycled.}
 
-\item{dev_terms}{An optional  data frame including 14 columns and up to
+\item{dev_terms}{An optional data frame including 14 or 17 columns and up to
 \code{times} rows showing the values of the deviation terms to be added to
 each linear vital rate. The column order should be: 1: survival,
 2: observation, 3: primary size, 4: secondary size, 5: tertiary size,
 6: reproduction, 7: fecundity, 8: juvenile survival, 9: juvenile
 observation, 10: juvenile primary size, 11: juvenile secondary size,
 12: juvenile tertiary size, 13: juvenile reproduction, and 14: juvenile
-maturity transition. Unused terms must be set to \code{0} (use of \code{NA}
-will produce errors). Single or small numbers of values per vital rate model
-are also allowed, and if the number of rows is less than \code{times}, then
-the terms will be cycled.}
+maturity transition. Optionally, the user may add three columns designating
+additive deviations to: 15: individual covariate a, 16: individual covariate
+b, and 17: individual covariate c. Unused terms must be set to \code{0} (use
+of \code{NA} will produce errors). Single or small numbers of values per
+vital rate model are also allowed, and if the number of rows is less than
+\code{times}, then the terms will be cycled.}
 
 \item{fb_sparse}{A logical value indicating whether function-based MPMs
 should be produced in sparse matrix format. Defaults to \code{FALSE}.}
 
-\item{firstage}{An optional integer used for function-based Leslie and
-age-by-stage MPMs giving the starting age in such MPMs. Use only if the MPM
-is both function-based and has age structure. Typically, the starting age in
-such MPMs should be set to \code{0} if post-breeding and \code{1} if
-pre-breeding. All other MPMs should be set to \code{0}.}
+\item{firstage}{An optional integer vector used for function-based Leslie
+and age-by-stage MPMs giving the starting ages in such MPMs. Use only if at
+least one MPM is both function-based and has age structure. Typically,
+the starting age in such MPMs should be set to \code{0} if post-breeding and
+\code{1} if pre-breeding. All other MPMs should be set to \code{0}. Do not
+use if no MPM has age structure. Defaults to \code{1} in Leslie and
+age-by-stage MPMs.}
 
 \item{finalage}{An optional integer used for function-based Leslie and
 age-by-stage MPMs giving the final age in such MPMs. Use only if the MPM is
@@ -218,8 +222,8 @@ fitness as 0 when their absolute values are less than the value given in
 argument \code{threshold}.}
 
 \item{converged_only}{A logical value indicating whether to show predicted
-trait optima only in cases where the Lyapunov coefficient in elasticity
-analysis has converged to 0. Defaults to \code{TRUE}.}
+trait optima only in cases where the elasticity analysis has converged.
+Defaults to \code{FALSE}.}
 
 \item{err_check}{A logical value indicating whether to include an extra list
 of output objects for error checking. Can also be set to the text value
@@ -269,23 +273,26 @@ allowed per ESS during ESS optimization. Defaults to 150.}
 }
 \value{
 A list of class \code{adaptInv}, with the following elements:
-\item{fitness}{A data frame giving the Lyapunov coefficients estimated for
-each variant, per replicate.}
+\item{fitness}{A data frame giving the resident and invasion fitness
+estimated for each variant, per replicate. In typical cases, the user will
+be interested in the invasion fitness, which corresponds to the Lyapunov
+coefficient of the invader in invasibility analysis.}
 \item{variants_out}{A two-level list with the top level list having number of
-elements equal to the number of variants, and the lower level
-corresponding to the number of replicates. Each element of the lower level
-list is a matrix showing the number of individuals in each stage (row) at each
-time (column).}
+elements equal to the number of variants, and the lower level corresponding
+to the number of replicates. Each element of the lower level list is a
+matrix showing the number of individuals in each stage (row) at each time
+(column).}
 \item{N_out}{A list with the number of elements equal to the number of
 replicates. Each element within this list is data frame showing the number
 of individuals of each species or genotype alive at each time. The number of
 rows are equal to the number of MPMs used, and the columns correspond to the
 time steps.}
+\item{trait_axis}{An edited version of the input trait axis.}
 \item{stageframe_list}{A list in which each element is the stageframe for
 each MPM used.}
 \item{hstages_list}{A list giving the used \code{hstages} data frames, which
-identify the correct stage pairing for each row / column in each
-historical MPM utilized.}
+identify the correct stage pairing for each row / column in each historical
+MPM utilized.}
 \item{agestages_list}{A list giving the used \code{agestages} data frames,
 which identify the correct age-stage pairing for each row / column in each
 age-by-stage MPM utilized.}
@@ -304,7 +311,13 @@ indices used to identify matrix elements for density dependence; and
 \code{density_vr_list}, which gives the \code{density_vr} inputs utilized.}
 }
 \description{
-Function \code{invade3} runs pairwise and multiple invasion analyses.
+Function \code{invade3} runs pairwise and multiple invasisibility analyses,
+and provides output to analyze all aspects of the dynamics of generic
+variants. The output includes invasion fitness for all variants included, as
+well as resident fitness in all simulations run. Forms the core data plotted
+by the \code{\link{plot.adaptInv}()} function to plot pairwise
+invasibility plots (PIPs) and elasticity plots. Also estimates trait optima,
+if any occur.
 }
 \section{Notes}{
 
@@ -323,11 +336,22 @@ communicated in Roff (2010, Modeling evolution: an introduction to numerical
 methods, Oxford University Press). In essence, function \code{invade3}
 determines which traits vary among all traits noted in the input trait axis.
 A new trait axis is then created with values of variable traits multiplied
-by 0.995, and this new trait axis is composed entirely of invaders that will
-be paired against each respective row in the original trait axis. These two
-trait axis frames are then used to conduct pairwise invasibility elasticity
-analyses, particularly noting where fitness values and trends invert. Note
-that this optimization approach really only works with one variable trait.
+by \code{0.995}, although this can be reset with argument \code{elast_mult}.
+This new trait axis is composed entirely of invaders that will be paired
+against each respective row in the original trait axis. These two trait axis
+frames are then used to conduct pairwise invasibility elasticity analyses,
+particularly noting where fitness values and trends invert. Elasticity plots
+show the results of these elasticity simulations, using R's line segment
+default in the \code{plot.default()} function. Results are then used to
+determine golden sections for further evaluation, within which the bounded
+Nelder-Mead algorithm is used to determine the optimum value. Note that this
+optimization approach typically works properly with only one variable trait.
+Also note that if a trait spans both negative and positive values, then
+elasticity calculation is altered such that invader values for negative
+values are calculated as the sum of the old trait value and the difference
+between that value and the value when multiplied by the elasticity value.
+This is done to ensure that all elasticity values are consistently lower
+than the original values.
 }
 
 \examples{

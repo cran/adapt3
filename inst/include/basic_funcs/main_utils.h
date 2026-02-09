@@ -21,17 +21,23 @@ using namespace LefkoUtils;
 // 2. void UFmat_alter Alter MPM U and F Matrices with Trait Axis Inputs, Standard Matrix Format
 // 3. void sp_Amat_alter Alter MPM A Matrices with Trait Axis Inputs, Sparse Matrix Format
 // 4. void sp_UFmat_alter Alter MPM U and F Matrices with Trait Axis Inputs, Sparse Matrix Format
+// 
 // 5. arma::mat exp_grid_single  Create Expanded Matrix Giving Permutations with Replacement
 // 6. void fastLm_sl  Fast Linear Regression, Slopes Only
 // 7. void proj3dens_ad  Project Forward By One Time Step
-// 8. void proj3dens_inv  Project Forward By One Time Step in Invastion Run
+// 8. void proj3dens_inv  Project Forward By One Time Step in Invasion Run
+// 
 // 9. void Lyapunov_df_maker  Create Data Frame to Hold Fitness Output from Function invade3()
 // 10. DataFrame ta_reassess  Expand Trait Axis Table Given User Input
 // 11. void pop_error2  Standardized Error Messages
-// 12. DataFrame df_rbind  Bind Two Data Frames By Row
-// 13. List df_indices  Subset A Data Frame By Row Index
-// 14. void Lyapunov_creator  Creates Final Table of Lyapunov Estimates
-// 15. void optim_ta_setup  Create Trait Axis Reassessed for Trait Optimization
+// 12. List df_indices  Subset A Data Frame By Row Index
+// 
+// 13. void Lyapunov_creator  Creates Final Table of Lyapunov Estimates
+// 14. void optim_ta_setup  Create Trait Axis Reassessed for Trait Optimization
+// 15. void density_prep  Format All Density-related Variables Based on Density Inputs
+// 
+// 16. Nullable<RObject> supplements_replacer  Create New Supplements List With Old Supplements Input and New Data Frame
+// 17. void leslie_stageframe_updater  Update Leslie MPM Info for VRM Input with Stageframe
 
 
 namespace AdaptUtils {
@@ -519,7 +525,7 @@ namespace AdaptUtils {
     
     int sparse_switch {0};
     int time_delay {1};
-    double pop_size {0};
+    double pop_size {0.};
     bool warn_trigger_neg = false;
     bool warn_trigger_1 = false;
     
@@ -531,9 +537,11 @@ namespace AdaptUtils {
     // Density dependence
     arma::uvec dyn_index321 = as<arma::uvec>(dens_index["index321"]);
     arma::uvec dyn_index_col = as<arma::uvec>(dens_index[1]);
+    arma::uvec dyn_index_s3 = as<arma::uvec>(dens_index[0]);
     arma::uvec dyn_style = as<arma::uvec>(dens_input["style"]);
     arma::vec dyn_alpha = as<arma::vec>(dens_input["alpha"]);
     arma::vec dyn_beta = as<arma::vec>(dens_input["beta"]);
+    arma::vec dyn_gamma = as<arma::vec>(dens_input["gamma"]);
     arma::uvec dyn_delay = as<arma::uvec>(dens_input["time_delay"]);
     arma::uvec dyn_type = as<arma::uvec>(dens_input["type"]);
     int n_dyn_elems = static_cast<int>(dyn_index321.n_elem);
@@ -554,6 +562,8 @@ namespace AdaptUtils {
     } else sparse_switch = sparse;
     
     double changing_element {0.0};
+    
+    bool additive_limit_enforced {false};
     
     if (sparse_switch == 0 && !sparse_input) {
       // Dense matrix projection
@@ -584,6 +594,14 @@ namespace AdaptUtils {
           }
           changing_element = theprophecy(dyn_index321(j)) * 
             (1 - used_popsize / dyn_alpha(j)); // Fi*(1 - ALPHA/n)
+        } else if (dyn_style(j) == 5) { // Additive limit function
+          additive_limit_enforced = true;
+          
+          changing_element = theprophecy(dyn_index321(j));
+        } else if (dyn_style(j) == 6) {
+          additive_limit_enforced = true;
+          
+          changing_element = theprophecy(dyn_index321(j));
         }
         
         if (substoch == 1 && dyn_type(j) == 1) {
@@ -632,12 +650,50 @@ namespace AdaptUtils {
           }
         }
       }
+      
       theseventhson = theprophecy * theseventhson;
       if (integeronly) {
         theseventhson = floor(theseventhson);
       }
-      if (err_check) prophesized_mat = theprophecy;
       
+      // Adjust pop size for additive limit
+      if (additive_limit_enforced) {
+        for (int j = 0; j < n_dyn_elems; j++) { // Density dependence
+          double current_alpha = dyn_alpha(j);
+          double current_beta = dyn_beta(j);
+          double current_gamma = dyn_gamma(j);
+          double Nsum = sum(theseventhson);
+          double K_limit = current_alpha;
+          unsigned int current_stage = dyn_index_s3(j);
+          double current_stage_inds = theseventhson(current_stage);
+          double NK_diff = Nsum - current_stage_inds;
+          double max_limit = K_limit - NK_diff;
+          
+          if (dyn_style(j) == 5) { // Additive limit function
+            pop_size = delay_N;
+            
+            double proposed_s3_total = current_beta * (current_alpha - pop_size);
+            
+            if (proposed_s3_total < current_gamma) {
+              proposed_s3_total = current_gamma;
+            } else if (proposed_s3_total > max_limit && max_limit > current_gamma) {
+              proposed_s3_total = max_limit;
+            }
+            theseventhson(current_stage) = proposed_s3_total;
+            
+          } else if (dyn_style(j) == 6) {
+            double proposed_s3_total = current_stage_inds;
+            if (proposed_s3_total < current_gamma) {
+              proposed_s3_total = current_gamma;
+            } else if (proposed_s3_total > max_limit && current_alpha > current_beta) {
+              proposed_s3_total = max_limit;
+            }
+            theseventhson(current_stage) = proposed_s3_total;
+          }
+        }
+      }
+      
+      if (err_check) prophesized_mat = theprophecy;
       proj_vec = theseventhson;
       
     } else {
@@ -688,6 +744,14 @@ namespace AdaptUtils {
           }
           changing_element = sparse_prophecy(dyn_index321(j)) * 
             (1 - used_popsize / dyn_alpha(j)); // Fi*(1 - ALPHA/n)
+        } else if (dyn_style(j) == 5) { // Additive limit function
+          additive_limit_enforced = true;
+          
+          changing_element = sparse_prophecy(dyn_index321(j)); 
+        } else if (dyn_style(j) == 6) {
+          additive_limit_enforced = true;
+          
+          changing_element = sparse_prophecy(dyn_index321(j));
         }
         
         if (substoch == 1 && dyn_type(j) == 1) {
@@ -741,14 +805,50 @@ namespace AdaptUtils {
       if (integeronly) {
         sparse_seventhson = floor(sparse_seventhson);
       }
-      if (err_check) prophesized_sp = sparse_prophecy;
       
+      // Adjust pop size for additive limit
+      if (additive_limit_enforced) {
+        for (int j = 0; j < n_dyn_elems; j++) { // Density dependence
+          double current_alpha = dyn_alpha(j);
+          double current_beta = dyn_beta(j);
+          double current_gamma = dyn_gamma(j);
+          double Nsum = accu(sparse_seventhson);
+          double K_limit = current_alpha;
+          unsigned int current_stage = dyn_index_s3(j);
+          double current_stage_inds = sparse_seventhson(current_stage);
+          double NK_diff = Nsum - current_stage_inds;
+          double max_limit = K_limit - NK_diff;
+          
+          if (dyn_style(j) == 5) { // Additive limit function
+            pop_size = delay_N;
+            
+            double proposed_s3_total = current_beta * (current_alpha - pop_size);
+            
+            if (proposed_s3_total < current_gamma) {
+              proposed_s3_total = current_gamma;
+            } else if (proposed_s3_total > max_limit && max_limit > current_gamma) {
+              proposed_s3_total = max_limit;
+            }
+            sparse_seventhson(current_stage) = proposed_s3_total;
+            
+          } else if (dyn_style(j) == 6) {
+            double proposed_s3_total = current_stage_inds;
+            if (proposed_s3_total < current_gamma) {
+              proposed_s3_total = current_gamma;
+            } else if (proposed_s3_total > max_limit && current_alpha > current_beta) {
+              proposed_s3_total = max_limit;
+            }
+            sparse_seventhson(current_stage) = proposed_s3_total;
+          }
+        }
+      }
+      if (err_check) prophesized_sp = sparse_prophecy;
       popproj = arma::vec(arma::mat(sparse_seventhson));
       proj_vec = popproj;
     }
   }
   
-  //' Project Forward By One Time Step in Invastion Run
+  //' Project Forward By One Time Step in Invasion Run
   //' 
   //' This function projects the community forward by one time step.
   //' 
@@ -827,9 +927,11 @@ namespace AdaptUtils {
     // Density dependence
     arma::uvec dyn_index321 = as<arma::uvec>(dens_index["index321"]);
     arma::uvec dyn_index_col = as<arma::uvec>(dens_index[1]);
+    arma::uvec dyn_index_s3 = as<arma::uvec>(dens_index[0]);
     arma::uvec dyn_style = as<arma::uvec>(dens_input["style"]);
     arma::vec dyn_alpha = as<arma::vec>(dens_input["alpha"]);
     arma::vec dyn_beta = as<arma::vec>(dens_input["beta"]);
+    arma::vec dyn_gamma = as<arma::vec>(dens_input["gamma"]);
     arma::uvec dyn_delay = as<arma::uvec>(dens_input["time_delay"]);
     arma::uvec dyn_type = as<arma::uvec>(dens_input["type"]);
     int n_dyn_elems = static_cast<int>(dyn_index321.n_elem);
@@ -850,6 +952,8 @@ namespace AdaptUtils {
     } else sparse_switch = sparse;
     
     double changing_element {0.0};
+    
+    bool additive_limit_enforced {false};
     
     if (sparse_switch == 0 && !sparse_input) {
       // Dense matrix projection
@@ -881,6 +985,14 @@ namespace AdaptUtils {
           }
           changing_element = theprophecy(dyn_index321(j)) * 
             (1 - used_popsize / dyn_alpha(j)); // Fi*(1 - ALPHA/n)
+        } else if (dyn_style(j) == 5) { // Additive limit function
+          additive_limit_enforced = true;
+          
+          changing_element = theprophecy(dyn_index321(j));
+        } else if (dyn_style(j) == 6) {
+          additive_limit_enforced = true;
+          
+          changing_element = theprophecy(dyn_index321(j));
         }
         
         if (substoch == 1 && dyn_type(j) == 1) {
@@ -929,12 +1041,48 @@ namespace AdaptUtils {
           }
         }
       }
+      
+      // Adjust pop size for additive limit
+      if (additive_limit_enforced) {
+        for (int j = 0; j < n_dyn_elems; j++) {
+          double current_alpha = dyn_alpha(j);
+          double current_beta = dyn_beta(j);
+          double current_gamma = dyn_gamma(j);
+          double Nsum = sum(theseventhson);
+          double K_limit = current_alpha;
+          unsigned int current_stage = dyn_index_s3(j);
+          double current_stage_inds = theseventhson(current_stage);
+          double NK_diff = Nsum - current_stage_inds;
+          double max_limit = K_limit - NK_diff;
+          
+          if (dyn_style(j) == 5) { // Additive limit function
+            pop_size = delay_N;
+            
+            double proposed_s3_total = current_beta * (current_alpha - pop_size);
+            
+            if (proposed_s3_total < current_gamma) {
+              proposed_s3_total = current_gamma;
+            } else if (proposed_s3_total > max_limit && max_limit > current_gamma) {
+              proposed_s3_total = max_limit;
+            }
+            theseventhson(current_stage) = proposed_s3_total;
+          } else if (dyn_style(j) == 6) {
+            double proposed_s3_total = current_stage_inds;
+            if (proposed_s3_total < current_gamma) {
+              proposed_s3_total = current_gamma;
+            } else if (proposed_s3_total > max_limit && current_alpha > current_beta) {
+              proposed_s3_total = max_limit;
+            }
+            theseventhson(current_stage) = proposed_s3_total;
+          }
+        }
+      }
       theseventhson = theprophecy * theseventhson;
       if (integeronly) {
         theseventhson = floor(theseventhson);
       }
-      if (err_check) prophesized_mat = theprophecy;
       
+      if (err_check) prophesized_mat = theprophecy;
       proj_vec = theseventhson;
       
     } else {
@@ -986,6 +1134,14 @@ namespace AdaptUtils {
           }
           changing_element = sparse_prophecy(dyn_index321(j)) * 
             (1 - used_popsize / dyn_alpha(j)); // Fi*(1 - ALPHA/n)
+        } else if (dyn_style(j) == 5) { // Additive limit function
+          additive_limit_enforced = true;
+          
+          changing_element = sparse_prophecy(dyn_index321(j));
+        } else if (dyn_style(j) == 6) {
+          additive_limit_enforced = true;
+          
+          changing_element = sparse_prophecy(dyn_index321(j));
         }
         
         if (substoch == 1 && dyn_type(j) == 1) {
@@ -1035,12 +1191,48 @@ namespace AdaptUtils {
         }
       }
       
+      // Adjust pop size for additive limit
+      if (additive_limit_enforced) {
+        for (int j = 0; j < n_dyn_elems; j++) { // Density dependence
+          double current_alpha = dyn_alpha(j);
+          double current_beta = dyn_beta(j);
+          double current_gamma = dyn_gamma(j);
+          double Nsum = accu(sparse_seventhson);
+          double K_limit = current_alpha;
+          unsigned int current_stage = dyn_index_s3(j);
+          double current_stage_inds = sparse_seventhson(current_stage);
+          double NK_diff = Nsum - current_stage_inds;
+          double max_limit = K_limit - NK_diff;
+          
+          if (dyn_style(j) == 5) { // Additive limit function
+            pop_size = delay_N;
+            
+            double proposed_s3_total = current_beta * (current_alpha - pop_size);
+            
+            if (proposed_s3_total < current_gamma) {
+              proposed_s3_total = current_gamma;
+            } else if (proposed_s3_total > max_limit && max_limit > current_gamma) {
+              proposed_s3_total = max_limit;
+            }
+            sparse_seventhson(current_stage) = proposed_s3_total;
+            
+          } else if (dyn_style(j) == 6) {
+            double proposed_s3_total = current_stage_inds;
+            if (proposed_s3_total < current_gamma) {
+              proposed_s3_total = current_gamma;
+            } else if (proposed_s3_total > max_limit && current_alpha > current_beta) {
+              proposed_s3_total = max_limit;
+            }
+            sparse_seventhson(current_stage) = proposed_s3_total;
+          }
+        }
+      }
       sparse_seventhson = sparse_prophecy * sparse_seventhson;
       if (integeronly) {
         sparse_seventhson = floor(sparse_seventhson);
       }
-      if (err_check) prophesized_sp = sparse_prophecy;
       
+      if (err_check) prophesized_sp = sparse_prophecy;
       popproj = arma::vec(arma::mat(sparse_seventhson));
       proj_vec = popproj;
     }
@@ -1048,9 +1240,9 @@ namespace AdaptUtils {
   
   //' Create Data Frame to Hold Fitness Output from Function invade3()
   //' 
-  //' This function performs a simple linear / multiple regression quickly and
-  //' accurately using RcppArmadillo. Based on code by Dirk Eddelbuettel,
-  //' derived from 
+  //' This function takes the main Lyapunov data, and performs a simple linear /
+  //' multiple regression to estimate invasion fitness, quickly and accurately
+  //' using RcppArmadillo. Based on code by Dirk Eddelbuettel, derived from
   //' https://gallery.rcpp.org/articles/fast-linear-model-with-armadillo/
   //' 
   //' @name Lyapunov_df_maker
@@ -1172,6 +1364,9 @@ namespace AdaptUtils {
     NumericVector jsizec_dev_ta;
     NumericVector jrepst_dev_ta;
     NumericVector jmatst_dev_ta;
+    NumericVector indcova_dev_ta;
+    NumericVector indcovb_dev_ta;
+    NumericVector indcovc_dev_ta;
     
     StringVector pop_ta;
     StringVector patch_ta;
@@ -1208,6 +1403,9 @@ namespace AdaptUtils {
     jsizec_dev_ta = as<NumericVector>(trait_axis["jsizec_dev"]);
     jrepst_dev_ta = as<NumericVector>(trait_axis["jrepst_dev"]);
     jmatst_dev_ta = as<NumericVector>(trait_axis["jmatst_dev"]);
+    indcova_dev_ta = as<NumericVector>(trait_axis["indcova"]);
+    indcovb_dev_ta = as<NumericVector>(trait_axis["indcovb"]);
+    indcovc_dev_ta = as<NumericVector>(trait_axis["indcovc"]);
     int ta_rows = static_cast<int>(stage3_ta.length());
     
     // Prep based on stages in stageframe
@@ -1334,6 +1532,16 @@ namespace AdaptUtils {
       }
       if (!NumericVector::is_na(jmatst_dev_ta(i))) {
         if (jmatst_dev_ta(i) != 0.) vrm_altered(i) = 1;
+      }
+      
+      if (!NumericVector::is_na(indcova_dev_ta(i))) {
+        if (indcova_dev_ta(i) != 0.) vrm_altered(i) = 1;
+      }
+      if (!NumericVector::is_na(indcovb_dev_ta(i))) {
+        if (indcovb_dev_ta(i) != 0.) vrm_altered(i) = 1;
+      }
+      if (!NumericVector::is_na(indcovc_dev_ta(i))) {
+        if (indcovc_dev_ta(i) != 0.) vrm_altered(i) = 1;
       }
     }
     
@@ -1677,7 +1885,8 @@ namespace AdaptUtils {
       NumericVector current_dev = {surv_dev_ta(i), obs_dev_ta(i), size_dev_ta(i),
         sizeb_dev_ta(i), sizec_dev_ta(i), repst_dev_ta(i), fec_dev_ta(i),
         jsurv_dev_ta(i), jobs_dev_ta(i), jsize_dev_ta(i), jsizeb_dev_ta(i),
-        jsizec_dev_ta(i), jrepst_dev_ta(i), jmatst_dev_ta(i)};
+        jsizec_dev_ta(i), jrepst_dev_ta(i), jmatst_dev_ta(i), indcova_dev_ta(i),
+        indcovb_dev_ta(i), indcovc_dev_ta(i)};
       arma::vec current_dev_arma = as<arma::vec>(current_dev);
       arma::uvec current_dev_nonzeros = find(current_dev_arma);
       int current_found_nonzeros = static_cast<int>(current_dev_nonzeros.n_elem);
@@ -1742,6 +1951,9 @@ namespace AdaptUtils {
     NumericVector jsizec_dev_newta (newta_rows);
     NumericVector jrepst_dev_newta (newta_rows);
     NumericVector jmatst_dev_newta (newta_rows);
+    NumericVector indcova_dev_newta (newta_rows);
+    NumericVector indcovb_dev_newta (newta_rows);
+    NumericVector indcovc_dev_newta (newta_rows);
     NumericVector mpm_altered_newta (newta_rows);
     NumericVector vrm_altered_newta (newta_rows);
     
@@ -1804,6 +2016,9 @@ namespace AdaptUtils {
             jsizec_dev_newta(basepoints(i) + overall_counter) = jsizec_dev_ta(i);
             jrepst_dev_newta(basepoints(i) + overall_counter) = jrepst_dev_ta(i);
             jmatst_dev_newta(basepoints(i) + overall_counter) = jmatst_dev_ta(i);
+            indcova_dev_newta(basepoints(i) + overall_counter) = indcova_dev_ta(i);
+            indcovb_dev_newta(basepoints(i) + overall_counter) = indcovb_dev_ta(i);
+            indcovc_dev_newta(basepoints(i) + overall_counter) = indcovc_dev_ta(i);
             mpm_altered_newta(basepoints(i) + overall_counter) = mpm_altered(i);
             vrm_altered_newta(basepoints(i) + overall_counter) = vrm_altered(i);
             
@@ -1860,7 +2075,7 @@ namespace AdaptUtils {
       }
     }
     
-    Rcpp::List newtraitaxis(33);
+    Rcpp::List newtraitaxis(36);
     
     newtraitaxis(0) = variant_newta;
     newtraitaxis(1) = stage3_newta;
@@ -1892,17 +2107,20 @@ namespace AdaptUtils {
     newtraitaxis(27) = jsizec_dev_newta;
     newtraitaxis(28) = jrepst_dev_newta;
     newtraitaxis(29) = jmatst_dev_newta;
-    newtraitaxis(30) = year2_newta;
-    newtraitaxis(31) = mpm_altered_newta;
-    newtraitaxis(32) = vrm_altered_newta;
+    newtraitaxis(30) = indcova_dev_newta;
+    newtraitaxis(31) = indcovb_dev_newta;
+    newtraitaxis(32) = indcovc_dev_newta;
+    newtraitaxis(33) = year2_newta;
+    newtraitaxis(34) = mpm_altered_newta;
+    newtraitaxis(35) = vrm_altered_newta;
     
     CharacterVector ta_namevec = {"variant", "stage3", "stage2", "stage1",
       "age3", "age2", "eststage3", "eststage2", "eststage1", "estage3",
       "estage2", "givenrate", "offset", "multiplier", "convtype",
       "convtype_t12", "surv_dev", "obs_dev", "size_dev", "sizeb_dev",
       "sizec_dev", "repst_dev", "fec_dev", "jsurv_dev", "jobs_dev", "jsize_dev",
-      "jsizeb_dev", "jsizec_dev", "jrepst_dev", "jmatst_dev", "year2",
-      "mpm_altered", "vrm_altered"};
+      "jsizeb_dev", "jsizec_dev", "jrepst_dev", "jmatst_dev", "indcova",
+      "indcovb", "indcovc", "year2", "mpm_altered", "vrm_altered"};
     CharacterVector ta_newclasses = {"data.frame", "adaptAxis"};
     newtraitaxis.attr("names") = ta_namevec;
     newtraitaxis.attr("row.names") = Rcpp::IntegerVector::create(NA_INTEGER, newta_rows);
@@ -2004,117 +2222,6 @@ namespace AdaptUtils {
     throw Rcpp::exception(eat_my_shorts.get_cstring(), false);
     
     return;
-  }
-  
-  //' Bind Two Data Frames By Row
-  //' 
-  //' This function takes two data frames, which must be composed of the same
-  //' variables in the same order. Although the variables may have different
-  //' names, the variables must be of the same type. The names of the variables in
-  //' the new merged data frame will match those of the first data frame.
-  //' Developed with the help of Microsoft Gemini AI.
-  //' 
-  //' @name df_rbind
-  //' 
-  //' @param df1 The first data frame, which will form the top of the new data
-  //' frame and will be used as a reference for variable names.
-  //' @param df2 The second data frame, which will be attached below data frame
-  //' \code{df1}.
-  //' 
-  //' @return A new data frame composed of the merged data frames.
-  //' 
-  //' @keywords internal
-  //' @noRd
-  inline DataFrame df_rbind(DataFrame df1, DataFrame df2) {
-    
-    int nrows1 = df1.nrows();
-    int nrows2 = df2.nrows();
-    int ncols = df1.size();
-  
-    if (ncols != df2.size()) {
-      stop("Data frames must have the same number of columns.");
-    }
-    
-    CharacterVector df_names = df1.names();
-  
-    List out_df (ncols);
-  
-    for (int i = 0; i < ncols; ++i) {
-      SEXP col1 = df1[i];
-      SEXP col2 = df2[i];
-  
-      if (TYPEOF(col1) != TYPEOF(col2)) {
-        stop("Columns must have the same type");
-      }
-  
-      switch(TYPEOF(col1)){
-        case INTSXP: {
-          IntegerVector combinedCol(nrows1 + nrows2);
-          IntegerVector col1Vector = as<IntegerVector>(col1);
-          IntegerVector col2Vector = as<IntegerVector>(col2);
-          std::copy(col1Vector.begin(), col1Vector.end(), combinedCol.begin());
-          std::copy(col2Vector.begin(), col2Vector.end(), combinedCol.begin() + nrows1);
-          
-          bool current_int_class1 = col1Vector.hasAttribute("levels");
-          if (current_int_class1) {
-            CharacterVector col1lvls = col1Vector.attr("levels");
-            CharacterVector col2lvls = col2Vector.attr("levels");
-            
-            CharacterVector col_mergedLevels = LefkoUtils::concat_str(col1lvls, col2lvls);
-            CharacterVector unique_levels = unique(col_mergedLevels);
-            
-            combinedCol.attr("levels") = unique_levels;
-          }
-          out_df(i) = combinedCol;
-          break;
-        }
-  
-        case LGLSXP: {
-          LogicalVector combinedCol(nrows1 + nrows2);
-          LogicalVector col1Vector = as<LogicalVector>(col1);
-          LogicalVector col2Vector = as<LogicalVector>(col2);
-          std::copy(col1Vector.begin(), col1Vector.end(), combinedCol.begin());
-          std::copy(col2Vector.begin(), col2Vector.end(), combinedCol.begin() + nrows1);
-          
-          out_df(i) = combinedCol;
-          break;
-        }
-  
-        case REALSXP: {
-          NumericVector combinedCol(nrows1 + nrows2);
-          NumericVector col1Vector = as<NumericVector>(col1);
-          NumericVector col2Vector = as<NumericVector>(col2);
-          std::copy(col1Vector.begin(), col1Vector.end(), combinedCol.begin());
-          std::copy(col2Vector.begin(), col2Vector.end(), combinedCol.begin() + nrows1);
-          
-          out_df(i) = combinedCol;
-          break;
-        }
-  
-        case STRSXP: {
-          CharacterVector combinedCol(nrows1 + nrows2);
-          CharacterVector col1Vector = as<CharacterVector>(col1);
-          CharacterVector col2Vector = as<CharacterVector>(col2);
-          std::copy(col1Vector.begin(), col1Vector.end(), combinedCol.begin());
-          std::copy(col2Vector.begin(), col2Vector.end(), combinedCol.begin() + nrows1);
-          
-          out_df(i) = combinedCol;
-          break;
-        }
-        default:
-          stop("Unsupported column type.");
-      }
-    }
-    
-    out_df.attr("names") = df_names;
-    out_df.attr("class") = "data.frame";
-    StringVector row_names(nrows1 + nrows2);
-    for (int i = 0; i < (nrows1 + nrows2); i++) {
-      row_names(i) = std::to_string(i+1);
-    }
-    out_df.attr("row.names") = row_names;
-    
-    return out_df;
   }
   
   //' Subset A Data Frame By Row Index
@@ -2376,12 +2483,15 @@ namespace AdaptUtils {
   //' @param optim_ta_995 A data frame giving trait axis data processed for ESS
   //' optimization. This is one of two data frames, and gives info for 99.5% the
   //' values of variable traits in \code{optim_ta}.
-  //' @param variable_traits An integer vector modifed by this function by
+  //' @param variable_traits An integer vector modified by this function by
   //' reference, indicating the actual traits that vary. The element order is:
   //' 1, givenrate; 2, offset; 3, multiplier; 4, surv_dev; 5, obs_dev;
   //' 6, size_dev; 7, sizeb_dev; 8, sizec_dev; 9, repst_dev; 10, fec_dev;
   //' 11, jsurv_dev; 12, jobs_dev; 13, jsize_dev; 14, jsizeb_dev; 15, jsizec_dev;
-  //' 16, jrepst_dev; and 17, jmatst_dev.
+  //' 16, jrepst_dev; 17, jmatst_dev; 18, indcova; 19, indcovb; and 20, indcovc.
+  //' @param flipped_traits An integer vector modified by this function to
+  //' indicate variables in the optimization trait axis that include both
+  //' positive and negative values.
   //' @param opt_res Relic integer value denoting the number of rows in the
   //' trait_axis used in trait optimization.
   //' @param elast_multiplier A double precision floating point number to
@@ -2395,12 +2505,13 @@ namespace AdaptUtils {
   //' @keywords internal
   //' @noRd
   inline void optim_ta_setup (DataFrame& ta_reassessed, DataFrame& ESS_ta,
-    DataFrame& optim_ta, DataFrame& optim_ta_995, IntegerVector& variable_traits,
+    DataFrame& optim_ta, DataFrame& optim_ta_995,
+    IntegerVector& variable_traits, IntegerVector& flipped_traits,
     int opt_res, double elast_multiplier = 0.995) {
     
     DataFrame ESS_optim_ta;
     DataFrame cloned_ta_reassess;
-    IntegerVector ESS_variable_traits (17, 0);
+    IntegerVector ESS_variable_traits (20, 0);
     
     // Vectors for optim_ta
     IntegerVector optim_variant;
@@ -2440,6 +2551,10 @@ namespace AdaptUtils {
     NumericVector optim_jrepst_dev;
     NumericVector optim_jmatst_dev;
     
+    NumericVector optim_indcova;
+    NumericVector optim_indcovb;
+    NumericVector optim_indcovc;
+    
     // Vectors for optim_ta_995
     IntegerVector optim_variant_995;
     
@@ -2477,6 +2592,10 @@ namespace AdaptUtils {
     NumericVector optim_jsizec_dev_995;
     NumericVector optim_jrepst_dev_995;
     NumericVector optim_jmatst_dev_995;
+    
+    NumericVector optim_indcova_995;
+    NumericVector optim_indcovb_995;
+    NumericVector optim_indcovc_995;
     
     // Vectors for ESS_trait_axis
     IntegerVector ESS_variant = {1, 2};
@@ -2517,6 +2636,10 @@ namespace AdaptUtils {
     NumericVector ESS_jrepst_dev (2, NA_REAL);
     NumericVector ESS_jmatst_dev (2, NA_REAL);
     
+    NumericVector ESS_indcova (2, NA_REAL);
+    NumericVector ESS_indcovb (2, NA_REAL);
+    NumericVector ESS_indcovc (2, NA_REAL);
+    
     // Vectors supplied in ta_reassessed
     IntegerVector variant = as<IntegerVector>(ta_reassessed["variant"]);
     
@@ -2538,6 +2661,9 @@ namespace AdaptUtils {
     NumericVector jsizec_dev = as<NumericVector>(ta_reassessed["jsizec_dev"]);
     NumericVector jrepst_dev = as<NumericVector>(ta_reassessed["jrepst_dev"]);
     NumericVector jmatst_dev = as<NumericVector>(ta_reassessed["jmatst_dev"]);
+    NumericVector indcova = as<NumericVector>(ta_reassessed["indcova"]);
+    NumericVector indcovb = as<NumericVector>(ta_reassessed["indcovb"]);
+    NumericVector indcovc = as<NumericVector>(ta_reassessed["indcovc"]);
     
     StringVector stage3 = as<StringVector>(ta_reassessed["stage3"]);
     StringVector stage2 = as<StringVector>(ta_reassessed["stage2"]);
@@ -2572,6 +2698,10 @@ namespace AdaptUtils {
     NumericVector jsizec_dev_noNA = na_omit(jsizec_dev);
     NumericVector jrepst_dev_noNA = na_omit(jrepst_dev);
     NumericVector jmatst_dev_noNA = na_omit(jmatst_dev);
+    
+    NumericVector indcova_noNA = na_omit(indcova);
+    NumericVector indcovb_noNA = na_omit(indcovb);
+    NumericVector indcovc_noNA = na_omit(indcovc);
     
     int var1_length {0};
     
@@ -2630,9 +2760,42 @@ namespace AdaptUtils {
     double jmatst_dev_min {0.};
     double jmatst_dev_max {0.};
     
+    double indcova_min {0.};
+    double indcova_max {0.};
+    double indcovb_min {0.};
+    double indcovb_max {0.};
+    double indcovc_min {0.};
+    double indcovc_max {0.};
+    
+    bool givenrate_flipped {false};
+    bool offset_flipped {false};
+    bool multiplier_flipped {false};
+    bool surv_dev_flipped {false};
+    bool obs_dev_flipped {false};
+    bool size_dev_flipped {false};
+    bool sizeb_dev_flipped {false};
+    bool sizec_dev_flipped {false};
+    bool repst_dev_flipped {false};
+    bool fec_dev_flipped {false};
+    bool jsurv_dev_flipped {false};
+    bool jobs_dev_flipped {false};
+    bool jsize_dev_flipped {false};
+    bool jsizeb_dev_flipped {false};
+    bool jsizec_dev_flipped {false};
+    bool jrepst_dev_flipped {false};
+    bool jmatst_dev_flipped {false};
+    bool indcova_flipped {false};
+    bool indcovb_flipped {false};
+    bool indcovc_flipped {false};
+    
     if (static_cast<int>(givenrate_noNA.length()) > 0) {
       givenrate_min = min(givenrate_noNA);
       givenrate_max = max(givenrate_noNA);
+      
+      if (givenrate_min < 0. && givenrate_max > 0.) {
+        givenrate_flipped = true;
+        flipped_traits(0) = 1;
+      }
       
       unsigned int givenrate_min_pos = which_min(givenrate_noNA);
       unsigned int givenrate_max_pos = which_max(givenrate_noNA);
@@ -2650,6 +2813,11 @@ namespace AdaptUtils {
       offset_min = min(offset_noNA);
       offset_max = max(offset_noNA);
       
+      if (offset_min < 0. && offset_max > 0.) {
+        offset_flipped = true;
+        flipped_traits(1) = 1;
+      }
+      
       unsigned int offset_min_pos = which_min(offset_noNA);
       unsigned int offset_max_pos = which_max(offset_noNA);
       
@@ -2665,6 +2833,11 @@ namespace AdaptUtils {
     if (static_cast<int>(multiplier_noNA.length()) > 0) {
       multiplier_min = min(multiplier_noNA);
       multiplier_max = max(multiplier_noNA);
+      
+      if (multiplier_min < 0. && multiplier_max > 0.) {
+        multiplier_flipped = true;
+        flipped_traits(2) = 1;
+      }
       
       unsigned int multiplier_min_pos = which_min(multiplier_noNA);
       unsigned int multiplier_max_pos = which_max(multiplier_noNA);
@@ -2685,6 +2858,11 @@ namespace AdaptUtils {
       unsigned int surv_dev_min_pos = which_min(surv_dev_noNA);
       unsigned int surv_dev_max_pos = which_max(surv_dev_noNA);
       
+      if (surv_dev_min < 0. && surv_dev_max > 0.) {
+        surv_dev_flipped = true;
+        flipped_traits(3) = 1;
+      }
+      
       if (surv_dev_min_pos < surv_dev_max_pos) {
         ESS_surv_dev(0) = surv_dev_min;
         ESS_surv_dev(1) = surv_dev_max;
@@ -2697,6 +2875,11 @@ namespace AdaptUtils {
     if (static_cast<int>(obs_dev_noNA.length()) > 0) {
       obs_dev_min = min(obs_dev_noNA);
       obs_dev_max = max(obs_dev_noNA);
+      
+      if (obs_dev_min < 0. && obs_dev_max > 0.) {
+        obs_dev_flipped = true;
+        flipped_traits(4) = 1;
+      }
       
       unsigned int obs_dev_min_pos = which_min(obs_dev_noNA);
       unsigned int obs_dev_max_pos = which_max(obs_dev_noNA);
@@ -2715,6 +2898,11 @@ namespace AdaptUtils {
       size_dev_min = min(size_dev_noNA);
       size_dev_max = max(size_dev_noNA);
       
+      if (size_dev_min < 0. && size_dev_max > 0.) {
+        size_dev_flipped = true;
+        flipped_traits(5) = 1;
+      }
+      
       unsigned int size_dev_min_pos = which_min(size_dev_noNA);
       unsigned int size_dev_max_pos = which_max(size_dev_noNA);
       
@@ -2730,6 +2918,11 @@ namespace AdaptUtils {
     if (static_cast<int>(sizeb_dev_noNA.length()) > 0) {
       sizeb_dev_min = min(sizeb_dev_noNA);
       sizeb_dev_max = max(sizeb_dev_noNA);
+      
+      if (sizeb_dev_min < 0. && sizeb_dev_max > 0.) {
+        sizeb_dev_flipped = true;
+        flipped_traits(6) = 1;
+      }
       
       unsigned int sizeb_dev_min_pos = which_min(sizeb_dev_noNA);
       unsigned int sizeb_dev_max_pos = which_max(sizeb_dev_noNA);
@@ -2747,6 +2940,11 @@ namespace AdaptUtils {
       sizec_dev_min = min(sizec_dev_noNA);
       sizec_dev_max = max(sizec_dev_noNA);
       
+      if (sizec_dev_min < 0. && sizec_dev_max > 0.) {
+        sizec_dev_flipped = true;
+        flipped_traits(7) = 1;
+      }
+      
       unsigned int sizec_dev_min_pos = which_min(sizec_dev_noNA);
       unsigned int sizec_dev_max_pos = which_max(sizec_dev_noNA);
       
@@ -2762,6 +2960,11 @@ namespace AdaptUtils {
     if (static_cast<int>(repst_dev_noNA.length()) > 0) {
       repst_dev_min = min(repst_dev_noNA);
       repst_dev_max = max(repst_dev_noNA);
+      
+      if (repst_dev_min < 0. && repst_dev_max > 0.) {
+        repst_dev_flipped = true;
+        flipped_traits(8) = 1;
+      }
       
       unsigned int repst_dev_min_pos = which_min(repst_dev_noNA);
       unsigned int repst_dev_max_pos = which_max(repst_dev_noNA);
@@ -2779,6 +2982,11 @@ namespace AdaptUtils {
       fec_dev_min = min(fec_dev_noNA);
       fec_dev_max = max(fec_dev_noNA);
       
+      if (fec_dev_min < 0. && fec_dev_max > 0.) {
+        fec_dev_flipped = true;
+        flipped_traits(9) = 1;
+      }
+      
       unsigned int fec_dev_min_pos = which_min(fec_dev_noNA);
       unsigned int fec_dev_max_pos = which_max(fec_dev_noNA);
       
@@ -2794,6 +3002,11 @@ namespace AdaptUtils {
     if (static_cast<int>(jsurv_dev_noNA.length()) > 0) {
       jsurv_dev_min = min(jsurv_dev_noNA);
       jsurv_dev_max = max(jsurv_dev_noNA);
+      
+      if (jsurv_dev_min < 0. && jsurv_dev_max > 0.) {
+        jsurv_dev_flipped = true;
+        flipped_traits(10) = 1;
+      }
       
       unsigned int jsurv_dev_min_pos = which_min(jsurv_dev_noNA);
       unsigned int jsurv_dev_max_pos = which_max(jsurv_dev_noNA);
@@ -2811,6 +3024,11 @@ namespace AdaptUtils {
       jobs_dev_min = min(jobs_dev_noNA);
       jobs_dev_max = max(jobs_dev_noNA);
       
+      if (jobs_dev_min < 0. && jobs_dev_max > 0.) {
+        jobs_dev_flipped = true;
+        flipped_traits(11) = 1;
+      }
+      
       unsigned int jobs_dev_min_pos = which_min(jobs_dev_noNA);
       unsigned int jobs_dev_max_pos = which_max(jobs_dev_noNA);
       
@@ -2826,6 +3044,11 @@ namespace AdaptUtils {
     if (static_cast<int>(jsize_dev_noNA.length()) > 0) {
       jsize_dev_min = min(jsize_dev_noNA);
       jsize_dev_max = max(jsize_dev_noNA);
+      
+      if (jsize_dev_min < 0. && jsize_dev_max > 0.) {
+        jsize_dev_flipped = true;
+        flipped_traits(12) = 1;
+      }
       
       unsigned int jsize_dev_min_pos = which_min(jsize_dev_noNA);
       unsigned int jsize_dev_max_pos = which_max(jsize_dev_noNA);
@@ -2843,6 +3066,11 @@ namespace AdaptUtils {
       jsizeb_dev_min = min(jsizeb_dev_noNA);
       jsizeb_dev_max = max(jsizeb_dev_noNA);
       
+      if (jsizeb_dev_min < 0. && jsizeb_dev_max > 0.) {
+        jsizeb_dev_flipped = true;
+        flipped_traits(13) = 1;
+      }
+      
       unsigned int jsizeb_dev_min_pos = which_min(jsizeb_dev_noNA);
       unsigned int jsizeb_dev_max_pos = which_max(jsizeb_dev_noNA);
       
@@ -2858,6 +3086,11 @@ namespace AdaptUtils {
     if (static_cast<int>(jsizec_dev_noNA.length()) > 0) {
       jsizec_dev_min = min(jsizec_dev_noNA);
       jsizec_dev_max = max(jsizec_dev_noNA);
+      
+      if (jsizec_dev_min < 0. && jsizec_dev_max > 0.) {
+        jsizec_dev_flipped = true;
+        flipped_traits(14) = 1;
+      }
       
       unsigned int jsizec_dev_min_pos = which_min(jsizec_dev_noNA);
       unsigned int jsizec_dev_max_pos = which_max(jsizec_dev_noNA);
@@ -2875,6 +3108,11 @@ namespace AdaptUtils {
       jrepst_dev_min = min(jrepst_dev_noNA);
       jrepst_dev_max = max(jrepst_dev_noNA);
       
+      if (jrepst_dev_min < 0. && jrepst_dev_max > 0.) {
+        jrepst_dev_flipped = true;
+        flipped_traits(15) = 1;
+      }
+      
       unsigned int jrepst_dev_min_pos = which_min(jrepst_dev_noNA);
       unsigned int jrepst_dev_max_pos = which_max(jrepst_dev_noNA);
       
@@ -2891,6 +3129,11 @@ namespace AdaptUtils {
       jmatst_dev_min = min(jmatst_dev_noNA);
       jmatst_dev_max = max(jmatst_dev_noNA);
       
+      if (jmatst_dev_min < 0. && jmatst_dev_max > 0.) {
+        jmatst_dev_flipped = true;
+        flipped_traits(16) = 1;
+      }
+      
       unsigned int jmatst_dev_min_pos = which_min(jmatst_dev_noNA);
       unsigned int jmatst_dev_max_pos = which_max(jmatst_dev_noNA);
       
@@ -2900,6 +3143,69 @@ namespace AdaptUtils {
       } else {
         ESS_jmatst_dev(0) = jmatst_dev_max;
         ESS_jmatst_dev(1) = jmatst_dev_min;
+      }
+    }
+    
+    if (static_cast<int>(indcova_noNA.length()) > 0) {
+      indcova_min = min(indcova_noNA);
+      indcova_max = max(indcova_noNA);
+      
+      if (indcova_min < 0. && indcova_max > 0.) {
+        indcova_flipped = true;
+        flipped_traits(17) = 1;
+      }
+      
+      unsigned int indcova_min_pos = which_min(indcova_noNA);
+      unsigned int indcova_max_pos = which_max(indcova_noNA);
+      
+      if (indcova_min_pos < indcova_max_pos) {
+        ESS_indcova(0) = indcova_min;
+        ESS_indcova(1) = indcova_max;
+      } else {
+        ESS_indcova(0) = indcova_max;
+        ESS_indcova(1) = indcova_min;
+      }
+    }
+    
+    if (static_cast<int>(indcovb_noNA.length()) > 0) {
+      indcovb_min = min(indcovb_noNA);
+      indcovb_max = max(indcovb_noNA);
+      
+      if (indcovb_min < 0. && indcovb_max > 0.) {
+        indcovb_flipped = true;
+        flipped_traits(18) = 1;
+      }
+      
+      unsigned int indcovb_min_pos = which_min(indcovb_noNA);
+      unsigned int indcovb_max_pos = which_max(indcovb_noNA);
+      
+      if (indcovb_min_pos < indcovb_max_pos) {
+        ESS_indcovb(0) = indcovb_min;
+        ESS_indcovb(1) = indcovb_max;
+      } else {
+        ESS_indcovb(0) = indcovb_max;
+        ESS_indcovb(1) = indcovb_min;
+      }
+    }
+    
+    if (static_cast<int>(indcovc_noNA.length()) > 0) {
+      indcovc_min = min(indcovc_noNA);
+      indcovc_max = max(indcovc_noNA);
+      
+      if (indcovc_min < 0. && indcovc_max > 0.) {
+        indcovc_flipped = true;
+        flipped_traits(19) = 1;
+      }
+      
+      unsigned int indcovc_min_pos = which_min(indcovc_noNA);
+      unsigned int indcovc_max_pos = which_max(indcovc_noNA);
+      
+      if (indcovc_min_pos < indcovc_max_pos) {
+        ESS_indcovc(0) = indcovc_min;
+        ESS_indcovc(1) = indcovc_max;
+      } else {
+        ESS_indcovc(0) = indcovc_max;
+        ESS_indcovc(1) = indcovc_min;
       }
     }
     
@@ -2950,7 +3256,7 @@ namespace AdaptUtils {
     StringVector unique_core_stages = unique(core_stage_index);
     int found_core_stage_indices = unique_core_stages.length();
     
-    arma::mat ta_rows_per_change_per_variant (found_core_stage_indices, 17, fill::zeros); // rows = var_rows, cols = vital rates
+    arma::mat ta_rows_per_change_per_variant (found_core_stage_indices, 20, fill::zeros); // rows = var_rows, cols = vital rates
     IntegerVector place_holder_for_mat (found_core_stage_indices, 0);
     
     StringVector new_stage3_found_variables (found_core_stage_indices);
@@ -3110,6 +3416,24 @@ namespace AdaptUtils {
       
       ta_rows_per_change_per_variant(0, 16) = 1;
     }
+    if (indcova_min != indcova_max) {
+      ESS_variable_traits(17) = 1;
+      found_variables_all++;
+      
+      ta_rows_per_change_per_variant(0, 17) = 1;
+    }
+    if (indcovb_min != indcovb_max) {
+      ESS_variable_traits(18) = 1;
+      found_variables_all++;
+      
+      ta_rows_per_change_per_variant(0, 18) = 1;
+    }
+    if (indcovc_min != indcovc_max) {
+      ESS_variable_traits(19) = 1;
+      found_variables_all++;
+      
+      ta_rows_per_change_per_variant(0, 19) = 1;
+    }
     
     int data_frame_length = opt_res * var1_length;
     cloned_ta_reassess = clone(ta_reassessed);
@@ -3169,6 +3493,9 @@ namespace AdaptUtils {
     optim_jsizec_dev = as<NumericVector>(cloned_ta_reassess["jsizec_dev"]);
     optim_jrepst_dev = as<NumericVector>(cloned_ta_reassess["jrepst_dev"]);
     optim_jmatst_dev = as<NumericVector>(cloned_ta_reassess["jmatst_dev"]);
+    optim_indcova = as<NumericVector>(cloned_ta_reassess["indcova"]);
+    optim_indcovb = as<NumericVector>(cloned_ta_reassess["indcovb"]);
+    optim_indcovc = as<NumericVector>(cloned_ta_reassess["indcovc"]);
     
     optim_givenrate_995 = clone(optim_givenrate);
     optim_offset_995 = clone(optim_offset);
@@ -3187,25 +3514,292 @@ namespace AdaptUtils {
     optim_jsizec_dev_995 = clone(optim_jsizec_dev);
     optim_jrepst_dev_995 = clone(optim_jrepst_dev);
     optim_jmatst_dev_995 = clone(optim_jmatst_dev);
+    optim_indcova_995 = clone(optim_indcova);
+    optim_indcovb_995 = clone(optim_indcovb);
+    optim_indcovc_995 = clone(optim_indcovc);
     
+    int og995_length = static_cast<int>(optim_givenrate_995.length());
     
-    if (ESS_variable_traits(0) > 0) optim_givenrate_995 = optim_givenrate_995 * elast_multiplier;
-    if (ESS_variable_traits(1) > 0) optim_offset_995 = optim_offset_995 * elast_multiplier;
-    if (ESS_variable_traits(2) > 0) optim_multiplier_995 = optim_multiplier_995 * elast_multiplier;
-    if (ESS_variable_traits(3) > 0) optim_surv_dev_995 = optim_surv_dev_995 * elast_multiplier;
-    if (ESS_variable_traits(4) > 0) optim_obs_dev_995 = optim_obs_dev_995 * elast_multiplier;
-    if (ESS_variable_traits(5) > 0) optim_size_dev_995 = optim_size_dev_995 * elast_multiplier;
-    if (ESS_variable_traits(6) > 0) optim_sizeb_dev_995 = optim_sizeb_dev_995 * elast_multiplier;
-    if (ESS_variable_traits(7) > 0) optim_sizec_dev_995 = optim_sizec_dev_995 * elast_multiplier;
-    if (ESS_variable_traits(8) > 0) optim_repst_dev_995 = optim_repst_dev_995 * elast_multiplier;
-    if (ESS_variable_traits(9) > 0) optim_fec_dev_995 = optim_fec_dev_995 * elast_multiplier;
-    if (ESS_variable_traits(10) > 0) optim_jsurv_dev_995 = optim_jsurv_dev_995 * elast_multiplier;
-    if (ESS_variable_traits(11) > 0) optim_jobs_dev_995 = optim_jobs_dev_995 * elast_multiplier;
-    if (ESS_variable_traits(12) > 0) optim_jsize_dev_995 = optim_jsize_dev_995 * elast_multiplier;
-    if (ESS_variable_traits(13) > 0) optim_jsizeb_dev_995 = optim_jsizeb_dev_995 * elast_multiplier;
-    if (ESS_variable_traits(14) > 0) optim_jsizec_dev_995 = optim_jsizec_dev_995 * elast_multiplier;
-    if (ESS_variable_traits(15) > 0) optim_jrepst_dev_995 = optim_jrepst_dev_995 * elast_multiplier;
-    if (ESS_variable_traits(16) > 0) optim_jmatst_dev_995 = optim_jmatst_dev_995 * elast_multiplier;
+    if (ESS_variable_traits(0) > 0) {
+      if (!givenrate_flipped) {
+        optim_givenrate_995 = optim_givenrate_995 * elast_multiplier;
+      } else {
+        for (int i = 0; i < og995_length; i++) {
+          if (optim_givenrate_995(i) < 0.) {
+            double opt_difference = optim_givenrate_995(i) - (optim_givenrate_995(i) * elast_multiplier);
+            optim_givenrate_995(i) = optim_givenrate_995(i) + opt_difference;
+          } else {
+            optim_givenrate_995(i) = optim_givenrate_995(i) * elast_multiplier;
+          }
+        }
+      }
+    }
+    if (ESS_variable_traits(1) > 0) {
+      if (!offset_flipped) {
+        optim_offset_995 = optim_offset_995 * elast_multiplier;
+      } else {
+        for (int i = 0; i < og995_length; i++) {
+          if (optim_offset_995(i) < 0.) {
+            double opt_difference = optim_offset_995(i) - (optim_offset_995(i) * elast_multiplier);
+            optim_offset_995(i) = optim_offset_995(i) + opt_difference;
+          } else {
+            optim_offset_995(i) = optim_offset_995(i) * elast_multiplier;
+          }
+        }
+      }
+    }
+    if (ESS_variable_traits(2) > 0) {
+      if (!multiplier_flipped) {
+        optim_multiplier_995 = optim_multiplier_995 * elast_multiplier;
+      } else {
+        for (int i = 0; i < og995_length; i++) {
+          if (optim_multiplier_995(i) < 0.) {
+            double opt_difference = optim_multiplier_995(i) - (optim_multiplier_995(i) * elast_multiplier);
+            optim_multiplier_995(i) = optim_multiplier_995(i) + opt_difference;
+          } else {
+            optim_multiplier_995(i) = optim_multiplier_995(i) * elast_multiplier;
+          }
+        }
+      }
+    }
+    if (ESS_variable_traits(3) > 0) {
+      if (!surv_dev_flipped) {
+        optim_surv_dev_995 = optim_surv_dev_995 * elast_multiplier;
+      } else {
+        for (int i = 0; i < og995_length; i++) {
+          if (optim_surv_dev_995(i) < 0.) {
+            double opt_difference = optim_surv_dev_995(i) - (optim_surv_dev_995(i) * elast_multiplier);
+            optim_surv_dev_995(i) = optim_surv_dev_995(i) + opt_difference;
+          } else {
+            optim_surv_dev_995(i) = optim_surv_dev_995(i) * elast_multiplier;
+          }
+        }
+      }
+    }
+    if (ESS_variable_traits(4) > 0) {
+      if (!obs_dev_flipped) {
+        optim_obs_dev_995 = optim_obs_dev_995 * elast_multiplier;
+      } else {
+        for (int i = 0; i < og995_length; i++) {
+          if (optim_obs_dev_995(i) < 0.) {
+            double opt_difference = optim_obs_dev_995(i) - (optim_obs_dev_995(i) * elast_multiplier);
+            optim_obs_dev_995(i) = optim_obs_dev_995(i) + opt_difference;
+          } else {
+            optim_obs_dev_995(i) = optim_obs_dev_995(i) * elast_multiplier;
+          }
+        }
+      }
+    }
+    if (ESS_variable_traits(5) > 0) {
+      if (!size_dev_flipped) {
+        optim_size_dev_995 = optim_size_dev_995 * elast_multiplier;
+      } else {
+        for (int i = 0; i < og995_length; i++) {
+          if (optim_size_dev_995(i) < 0.) {
+            double opt_difference = optim_size_dev_995(i) - (optim_size_dev_995(i) * elast_multiplier);
+            optim_size_dev_995(i) = optim_size_dev_995(i) + opt_difference;
+          } else {
+            optim_size_dev_995(i) = optim_size_dev_995(i) * elast_multiplier;
+          }
+        }
+      }
+    }
+    if (ESS_variable_traits(6) > 0) {
+      if (!sizeb_dev_flipped) {
+        optim_sizeb_dev_995 = optim_sizeb_dev_995 * elast_multiplier;
+      } else {
+        for (int i = 0; i < og995_length; i++) {
+          if (optim_sizeb_dev_995(i) < 0.) {
+            double opt_difference = optim_sizeb_dev_995(i) - (optim_sizeb_dev_995(i) * elast_multiplier);
+            optim_sizeb_dev_995(i) = optim_sizeb_dev_995(i) + opt_difference;
+          } else {
+            optim_sizeb_dev_995(i) = optim_sizeb_dev_995(i) * elast_multiplier;
+          }
+        }
+      }
+    }
+    if (ESS_variable_traits(7) > 0) {
+      if (!sizec_dev_flipped) {
+        optim_sizec_dev_995 = optim_sizec_dev_995 * elast_multiplier;
+      } else {
+        for (int i = 0; i < og995_length; i++) {
+          if (optim_sizec_dev_995(i) < 0.) {
+            double opt_difference = optim_sizec_dev_995(i) - (optim_sizec_dev_995(i) * elast_multiplier);
+            optim_sizec_dev_995(i) = optim_sizec_dev_995(i) + opt_difference;
+          } else {
+            optim_sizec_dev_995(i) = optim_sizec_dev_995(i) * elast_multiplier;
+          }
+        }
+      }
+    }
+    if (ESS_variable_traits(8) > 0) {
+      if (!repst_dev_flipped) {
+        optim_repst_dev_995 = optim_repst_dev_995 * elast_multiplier;
+      } else {
+        for (int i = 0; i < og995_length; i++) {
+          if (optim_repst_dev_995(i) < 0.) {
+            double opt_difference = optim_repst_dev_995(i) - (optim_repst_dev_995(i) * elast_multiplier);
+            optim_repst_dev_995(i) = optim_repst_dev_995(i) + opt_difference;
+          } else {
+            optim_repst_dev_995(i) = optim_repst_dev_995(i) * elast_multiplier;
+          }
+        }
+      }
+    }
+    if (ESS_variable_traits(9) > 0) {
+      if (!fec_dev_flipped) {
+        optim_fec_dev_995 = optim_fec_dev_995 * elast_multiplier;
+      } else {
+        for (int i = 0; i < og995_length; i++) {
+          if (optim_fec_dev_995(i) < 0.) {
+            double opt_difference = optim_fec_dev_995(i) - (optim_fec_dev_995(i) * elast_multiplier);
+            optim_fec_dev_995(i) = optim_fec_dev_995(i) + opt_difference;
+          } else {
+            optim_fec_dev_995(i) = optim_fec_dev_995(i) * elast_multiplier;
+          }
+        }
+      }
+    }
+    if (ESS_variable_traits(10) > 0) {
+      if (!jsurv_dev_flipped) {
+        optim_jsurv_dev_995 = optim_jsurv_dev_995 * elast_multiplier;
+      } else {
+        for (int i = 0; i < og995_length; i++) {
+          if (optim_jsurv_dev_995(i) < 0.) {
+            double opt_difference = optim_jsurv_dev_995(i) - (optim_jsurv_dev_995(i) * elast_multiplier);
+            optim_jsurv_dev_995(i) = optim_jsurv_dev_995(i) + opt_difference;
+          } else {
+            optim_jsurv_dev_995(i) = optim_jsurv_dev_995(i) * elast_multiplier;
+          }
+        }
+      }
+    }
+    if (ESS_variable_traits(11) > 0) {
+      if (!jobs_dev_flipped) {
+        optim_jobs_dev_995 = optim_jobs_dev_995 * elast_multiplier;
+      } else {
+        for (int i = 0; i < og995_length; i++) {
+          if (optim_jobs_dev_995(i) < 0.) {
+            double opt_difference = optim_jobs_dev_995(i) - (optim_jobs_dev_995(i) * elast_multiplier);
+            optim_jobs_dev_995(i) = optim_jobs_dev_995(i) + opt_difference;
+          } else {
+            optim_jobs_dev_995(i) = optim_jobs_dev_995(i) * elast_multiplier;
+          }
+        }
+      }
+    }
+    if (ESS_variable_traits(12) > 0) {
+      if (!jsize_dev_flipped) {
+        optim_jsize_dev_995 = optim_jsize_dev_995 * elast_multiplier;
+      } else {
+        for (int i = 0; i < og995_length; i++) {
+          if (optim_jsize_dev_995(i) < 0.) {
+            double opt_difference = optim_jsize_dev_995(i) - (optim_jsize_dev_995(i) * elast_multiplier);
+            optim_jsize_dev_995(i) = optim_jsize_dev_995(i) + opt_difference;
+          } else {
+            optim_jsize_dev_995(i) = optim_jsize_dev_995(i) * elast_multiplier;
+          }
+        }
+      }
+    }
+    if (ESS_variable_traits(13) > 0) {
+      if (!jsizeb_dev_flipped) {
+        optim_jsizeb_dev_995 = optim_jsizeb_dev_995 * elast_multiplier;
+      } else {
+        for (int i = 0; i < og995_length; i++) {
+          if (optim_jsizeb_dev_995(i) < 0.) {
+            double opt_difference = optim_jsizeb_dev_995(i) - (optim_jsizeb_dev_995(i) * elast_multiplier);
+            optim_jsizeb_dev_995(i) = optim_jsizeb_dev_995(i) + opt_difference;
+          } else {
+            optim_jsizeb_dev_995(i) = optim_jsizeb_dev_995(i) * elast_multiplier;
+          }
+        }
+      }
+    }
+    if (ESS_variable_traits(14) > 0) {
+      if (!jsizec_dev_flipped) {
+        optim_jsizec_dev_995 = optim_jsizec_dev_995 * elast_multiplier;
+      } else {
+        for (int i = 0; i < og995_length; i++) {
+          if (optim_jsizec_dev_995(i) < 0.) {
+            double opt_difference = optim_jsizec_dev_995(i) - (optim_jsizec_dev_995(i) * elast_multiplier);
+            optim_jsizec_dev_995(i) = optim_jsizec_dev_995(i) + opt_difference;
+          } else {
+            optim_jsizec_dev_995(i) = optim_jsizec_dev_995(i) * elast_multiplier;
+          }
+        }
+      }
+    }
+    if (ESS_variable_traits(15) > 0) {
+      if (!jrepst_dev_flipped) {
+        optim_jrepst_dev_995 = optim_jrepst_dev_995 * elast_multiplier;
+      } else {
+        for (int i = 0; i < og995_length; i++) {
+          if (optim_jrepst_dev_995(i) < 0.) {
+            double opt_difference = optim_jrepst_dev_995(i) - (optim_jrepst_dev_995(i) * elast_multiplier);
+            optim_jrepst_dev_995(i) = optim_jrepst_dev_995(i) + opt_difference;
+          } else {
+            optim_jrepst_dev_995(i) = optim_jrepst_dev_995(i) * elast_multiplier;
+          }
+        }
+      }
+    }
+    if (ESS_variable_traits(16) > 0) {
+      if (!jmatst_dev_flipped) {
+        optim_jmatst_dev_995 = optim_jmatst_dev_995 * elast_multiplier;
+      } else {
+        for (int i = 0; i < og995_length; i++) {
+          if (optim_jmatst_dev_995(i) < 0.) {
+            double opt_difference = optim_jmatst_dev_995(i) - (optim_jmatst_dev_995(i) * elast_multiplier);
+            optim_jmatst_dev_995(i) = optim_jmatst_dev_995(i) + opt_difference;
+          } else {
+            optim_jmatst_dev_995(i) = optim_jmatst_dev_995(i) * elast_multiplier;
+          }
+        }
+      }
+    }
+    if (ESS_variable_traits(17) > 0) {
+      if (!indcova_flipped) {
+        optim_indcova_995 = optim_indcova_995 * elast_multiplier;
+      } else {
+        for (int i = 0; i < og995_length; i++) {
+          if (optim_indcova_995(i) < 0.) {
+            double opt_difference = optim_indcova_995(i) - (optim_indcova_995(i) * elast_multiplier);
+            optim_indcova_995(i) = optim_indcova_995(i) + opt_difference;
+          } else {
+            optim_indcova_995(i) = optim_indcova_995(i) * elast_multiplier;
+          }
+        }
+      }
+    }
+    if (ESS_variable_traits(18) > 0) {
+      if (!indcovb_flipped) {
+        optim_indcovb_995 = optim_indcovb_995 * elast_multiplier;
+      } else {
+        for (int i = 0; i < og995_length; i++) {
+          if (optim_indcovb_995(i) < 0.) {
+            double opt_difference = optim_indcovb_995(i) - (optim_indcovb_995(i) * elast_multiplier);
+            optim_indcovb_995(i) = optim_indcovb_995(i) + opt_difference;
+          } else {
+            optim_indcovb_995(i) = optim_indcovb_995(i) * elast_multiplier;
+          }
+        }
+      }
+    }
+    if (ESS_variable_traits(19) > 0) {
+      if (!indcovc_flipped) {
+        optim_indcovc_995 = optim_indcovc_995 * elast_multiplier;
+      } else {
+        for (int i = 0; i < og995_length; i++) {
+          if (optim_indcovc_995(i) < 0.) {
+            double opt_difference = optim_indcovc_995(i) - (optim_indcovc_995(i) * elast_multiplier);
+            optim_indcovc_995(i) = optim_indcovc_995(i) + opt_difference;
+          } else {
+            optim_indcovc_995(i) = optim_indcovc_995(i) * elast_multiplier;
+          }
+        }
+      }
+    }
     
     optim_variant_995 = clone(optim_variant);
     
@@ -3225,7 +3819,7 @@ namespace AdaptUtils {
     optim_mpm_altered_995 = clone(optim_mpm_altered);
     optim_vrm_altered_995 = clone(optim_vrm_altered);
     
-    List output (33);
+    List output (36);
     
     output(0) = optim_variant;
     output(1) = optim_stage3;
@@ -3257,9 +3851,12 @@ namespace AdaptUtils {
     output(27) = optim_jsizec_dev;
     output(28) = optim_jrepst_dev;
     output(29) = optim_jmatst_dev;
-    output(30) = optim_year2;
-    output(31) = optim_mpm_altered;
-    output(32) = optim_vrm_altered;
+    output(30) = optim_indcova;
+    output(31) = optim_indcovb;
+    output(32) = optim_indcovc;
+    output(33) = optim_year2;
+    output(34) = optim_mpm_altered;
+    output(35) = optim_vrm_altered;
     
     CharacterVector ta_names = as<CharacterVector>(ta_reassessed.attr("names"));
     output.attr("names") = clone(ta_names);
@@ -3268,7 +3865,7 @@ namespace AdaptUtils {
     
     optim_ta = output;
     
-    List output_995 (33);
+    List output_995 (36);
     
     output_995(0) = optim_variant_995;
     output_995(1) = optim_stage3_995;
@@ -3300,9 +3897,12 @@ namespace AdaptUtils {
     output_995(27) = optim_jsizec_dev_995;
     output_995(28) = optim_jrepst_dev_995;
     output_995(29) = optim_jmatst_dev_995;
-    output_995(30) = optim_year2_995;
-    output_995(31) = optim_mpm_altered_995;
-    output_995(32) = optim_vrm_altered_995;
+    output_995(30) = optim_indcova_995;
+    output_995(31) = optim_indcovb_995;
+    output_995(32) = optim_indcovc_995;
+    output_995(33) = optim_year2_995;
+    output_995(34) = optim_mpm_altered_995;
+    output_995(35) = optim_vrm_altered_995;
     
     output_995.attr("names") = clone(ta_names);
     output_995.attr("class") = "data.frame";
@@ -3310,7 +3910,7 @@ namespace AdaptUtils {
     
     optim_ta_995 = output_995;
     
-    List output_ESS (33);
+    List output_ESS (36);
     
     output_ESS(0) = ESS_variant;
     output_ESS(1) = ESS_stage3;
@@ -3342,9 +3942,12 @@ namespace AdaptUtils {
     output_ESS(27) = ESS_jsizec_dev;
     output_ESS(28) = ESS_jrepst_dev;
     output_ESS(29) = ESS_jmatst_dev;
-    output_ESS(30) = ESS_year2;
-    output_ESS(31) = ESS_mpm_altered;
-    output_ESS(32) = ESS_vrm_altered;
+    output_ESS(30) = ESS_indcova;
+    output_ESS(31) = ESS_indcovb;
+    output_ESS(32) = ESS_indcovc;
+    output_ESS(33) = ESS_year2;
+    output_ESS(34) = ESS_mpm_altered;
+    output_ESS(35) = ESS_vrm_altered;
     
     output_ESS.attr("names") = clone(ta_names);
     output_ESS.attr("class") = "data.frame";
@@ -3354,7 +3957,555 @@ namespace AdaptUtils {
     
     variable_traits = ESS_variable_traits;
   }
-
+  
+  //' Format All Density-related Variables Based on Density Inputs
+  //' 
+  //' Function \code{density_prep()} takes the objects input in arguement
+  //' \code{density} within the core projection functions and formats a number
+  //' of control variables dictating how density will be interpreted during the
+  //' projection.
+  //' 
+  //' @name density_prep
+  //' 
+  //' @param dens_index A reference to an empty List, which will be modified via
+  //' this function. Will provide an index to the elements of the matrix to be
+  //' altered during density adjustment.
+  //' @param dyn_style An empty Armadillo unsigned integer vector, given as a
+  //' reference to be modified. Will provide the density dependence styles to be
+  //' used in density adjustment.
+  //' @param dyn_alpha An empty Armadillo double floating point vector, given as
+  //' a reference to be modified. Will provide the values of alpha to be used in
+  //' density adjustment.
+  //' @param dyn_beta An empty Armadillo double floating point vector, given as
+  //' a reference to be modified. Will provide the values of beta to be used in
+  //' density adjustment.
+  //' @param dyn_gamma An empty Armadillo double floating point vector, given as
+  //' a reference to be modified. Will provide the values of gamma to be used in
+  //' density adjustment.
+  //' @param dens_yn_int An integer giving whether density dependence
+  //' information has been provided. Altered by reference.
+  //' @param dens_input The data frame input via the \code{density} argument, or
+  //' a single data frame from the list input there.
+  //' @param hstages The \code{hstages} data frame within the input lefkoMat
+  //' object.
+  //' @param agestagews The \code{agestages} data frame within the input
+  //' lefkoMat object.
+  //' @param stageframe The stageframe, typically within object \code{ahstages}
+  //' within the lefkoMat object input.
+  //' @param exp_tol The exponent maximmum limit being used.
+  //' @param format An integer giving the format of the MPM.
+  //' @param finalage The final age to use in age-based or age-by-stage MPMs.
+  //' @param preexisting A Boolean value indicating whether the MPM is already
+  //' built.
+  //' @param funcbased A Boolean value indicating whether the MPM is function-
+  //' based and will be built during projection.
+  //' 
+  //' @return No objects are returned, though some inputs are modified.
+  //' 
+  //' @keywords internal
+  //' @noRd
+  inline void density_prep (List& dens_index, arma::uvec& dyn_style,
+    arma::vec& dyn_alpha, arma::vec& dyn_beta, arma::vec& dyn_gamma,
+    int& dens_yn_int, const DataFrame dens_input, const DataFrame hstages,
+    const DataFrame agestages, const DataFrame stageframe, const double exp_tol,
+    const int format, const int finalage, const bool preexisting,
+    const bool funcbased) {
+    
+    // Rcout << "density_prep A" << endl;
+    
+    if (dens_input.hasAttribute("class")) {
+      // Rcout << "density_prep B" << endl;
+      
+      CharacterVector chosen_density_class = dens_input.attr("class");
+      bool found_lefkoDens {false};
+      
+      // Rcout << "density_prep C" << endl;
+      
+      for (int j = 0; j < static_cast<int>(chosen_density_class.length()); j++) {
+        if (chosen_density_class(j) == "lefkoDens") found_lefkoDens = true;
+      }
+      if (!found_lefkoDens) {
+        AdaptUtils::pop_error2("density", "a list of lefkoDens objects and NULL values", "", 1);
+      }
+      
+      // Rcout << "density_prep D" << endl;
+      
+      CharacterVector dl_stage1 = as<CharacterVector>(dens_input["stage1"]);
+      IntegerVector dl_age2 = as<IntegerVector>(dens_input["age2"]);
+      
+      // Rcout << "density_prep E" << endl;
+      
+      if (format < 3) {
+        if (is<LogicalVector>(dens_input["stage1"])) {
+          throw Rcpp::exception("Argument density requires real stage1 entries other than NA if MPMs are historical.", false);
+        }
+        for (int j = 0; j < static_cast<int>(dl_stage1.length()); j++) {
+          if (CharacterVector::is_na(dl_stage1(j))) {
+            throw Rcpp::exception("Argument density requires real stage1 entries other than NA if MPMs are historical.", false);
+          }
+        }
+      } else if (format > 3) {
+        if (is<LogicalVector>(dens_input["age2"])) {
+          bool found_all_ageclasses {false};
+          
+          CharacterVector dens_input_stage2 = as<CharacterVector>(dens_input["stage2"]);
+          CharacterVector dens_input_stage3 = as<CharacterVector>(dens_input["stage3"]);
+          int dens_input_no_stages = static_cast<int>(dens_input_stage2.length());
+          
+          for (int j = 0; j < dens_input_no_stages; j++) {
+            bool found_age_bool1 {false};
+            bool found_age_bool2 {false};
+            
+            found_age_bool1 = LefkoInputs::stringcompare_input(String(dens_input_stage2(j)), "age", true);
+            found_age_bool2 = LefkoInputs::stringcompare_input(String(dens_input_stage3(j)), "age", true);
+            if (!IntegerVector::is_na(dl_age2(j)) && !LogicalVector::is_na(dl_age2(j)) && dl_age2(j) > 0) {
+              found_age_bool1 = true;
+              found_age_bool2 = true;
+            }
+            if (found_age_bool1 && found_age_bool2) found_all_ageclasses = true;
+          }
+          
+          if (!found_all_ageclasses) {
+            throw Rcpp::exception("Argument density requires real stage1 entries other than NA if MPMs are historical.", false);
+          }
+        }
+      }
+      
+      dens_yn_int = 1;
+    } else {
+      AdaptUtils::pop_error2("density", "a list of lefkoDens objects and NULL values", "", 1);
+    }
+    
+    // Rcout << "density_prep F" << endl;
+    
+    Rcpp::StringVector di_stage3 = as<StringVector>(dens_input["stage3"]);
+    Rcpp::StringVector di_stage2 = as<StringVector>(dens_input["stage2"]);
+    Rcpp::StringVector di_stage1 = as<StringVector>(dens_input["stage1"]);
+    Rcpp::IntegerVector di_age2 = as<IntegerVector>(dens_input["age2"]);
+    int di_size = di_stage3.length();
+    
+    // Rcout << "density_prep G" << endl;
+    
+    if (format < 3) {
+      // Rcout << "density_prep H" << endl;
+      
+      StringVector stage3 = as<StringVector>(hstages["stage_2"]);
+      StringVector stage2r = as<StringVector>(hstages["stage_1"]);
+      StringVector stage2c = as<StringVector>(hstages["stage_2"]);
+      StringVector stage1 = as<StringVector>(hstages["stage_1"]);
+      int hst_size = stage3.length();
+      
+      arma::uvec hst_3(hst_size, fill::zeros);
+      arma::uvec hst_2r(hst_size, fill::zeros);
+      arma::uvec hst_2c(hst_size, fill::zeros);
+      arma::uvec hst_1(hst_size, fill::zeros);
+      
+      arma::uvec di_stage32_id(di_size, fill::zeros);
+      arma::uvec di_stage21_id(di_size, fill::zeros);
+      arma::uvec di_index(di_size, fill::zeros);
+      
+      for (int j = 0; j < di_size; j++) { // Loop through each density_input line
+        for (int k = 0; k < hst_size; k++) {
+          if (di_stage3(j) == stage3(k)) {
+            hst_3(k) = 1;
+          } else {
+            hst_3(k) = 0;
+          }
+        }
+        if (sum(hst_3) == 0) {
+          throw Rcpp::exception("Stages in density frame do not match stageframe.", false);
+        }
+        
+        for (int k = 0; k < hst_size; k++) {
+          if (di_stage2(j) == stage2r(k)) {
+            hst_2r(k) = 1;
+          } else {
+            hst_2r(k) = 0;
+          }
+        }
+        if (sum(hst_2r) == 0) {
+          throw Rcpp::exception("Stages in density frame do not match stageframe.", false);
+        }
+        
+        for (int k = 0; k < hst_size; k++) {
+          if (di_stage2(j) == stage2c(k)) {
+            hst_2c(k) = 1;
+          } else {
+            hst_2c(k) = 0;
+          }
+        }
+        if (sum(hst_2c) == 0) {
+          throw Rcpp::exception("Stages in density frame do not match stageframe.", false);
+        }
+        
+        for (int k = 0; k < hst_size; k++) {
+          if (di_stage1(j) == stage1(k)) {
+            hst_1(k) = 1;
+          } else {
+            hst_1(k) = 0;
+          }
+        }
+        if (sum(hst_1) == 0) {
+          throw Rcpp::exception("Stages in density frame do not match stageframe.", false);
+        }
+        
+        arma::uvec find_hst3 = find(hst_3);
+        arma::uvec find_hst2r = find(hst_2r);
+        arma::uvec find_hst2c = find(hst_2c);
+        arma::uvec find_hst1 = find(hst_1);
+        
+        arma::uvec pop_32 = intersect(find_hst3, find_hst2r);
+        arma::uvec pop_21 = intersect(find_hst2c, find_hst1);
+        
+        if (static_cast<int>(pop_32.n_elem) == 0 || static_cast<int>(pop_21.n_elem) == 0) {
+          throw Rcpp::exception("Some stages in argument density could not be found.", 
+            false);
+        }
+        di_stage32_id(j) = pop_32(0);
+        di_stage21_id(j) = pop_21(0);
+        di_index(j) = pop_32(0) + (pop_21(0) * hst_size);
+        
+        hst_3.zeros();
+        hst_2r.zeros();
+        hst_2c.zeros();
+        hst_1.zeros();
+      }
+      
+      dens_index = Rcpp::List::create(_["index32"] = di_stage32_id,
+        _["index21"] = di_stage21_id, _["index321"] = di_index);
+      
+    } else if (format == 4 ) {
+      // Rcout << "density_prep I" << endl;
+      
+      StringVector stage3 = as<StringVector>(agestages["stage"]);
+      StringVector stage2 = as<StringVector>(agestages["stage"]);
+      IntegerVector age2 = as<IntegerVector>(agestages["age"]);
+      int agst_size = stage3.length();
+      
+      arma::uvec agst_s3(agst_size, fill::zeros);
+      arma::uvec agst_a3(agst_size, fill::zeros);
+      arma::uvec agst_s2(agst_size, fill::zeros);
+      arma::uvec agst_a2(agst_size, fill::zeros);
+      
+      arma::uvec di_s3a3_id(di_size, fill::zeros);
+      arma::uvec di_s2a2_id(di_size, fill::zeros);
+      arma::uvec di_index(di_size, fill::zeros);
+      
+      for (int j = 0; j < di_size; j++) { // Loop through each density_input line
+        for (int k = 0; k < agst_size; k++) {
+          if (di_stage3(j) == stage3(k)) {
+            agst_s3(k) = 1;
+          } else {
+            agst_s3(k) = 0;
+          }
+        }
+        if (sum(agst_s3) == 0) {
+          throw Rcpp::exception("Stages in density frame do not match stageframe.", false);
+        }
+        
+        for (int k = 0; k < agst_size; k++) {
+          if (di_stage2(j) == stage2(k)) {
+            agst_s2(k) = 1;
+          } else {
+            agst_s2(k) = 0;
+          }
+        }
+        if (sum(agst_s2) == 0) {
+          throw Rcpp::exception("Stages in density frame do not match stageframe.", false);
+        }
+        
+        for (int k = 0; k < agst_size; k++) {
+          if (di_age2(j) < finalage) {
+            if (di_age2(j) == age2(k)) {
+              agst_a2(k) = 1;
+              
+              for (int l = 0; l < agst_size; l++) {
+                if ((di_age2(j) + 1) == age2(l)) {
+                  agst_a3(l) = 1;
+                } else {
+                  agst_a3(l) = 0;
+                }
+              }
+            } else {
+              agst_a2(k) = 0;
+            }
+          } else {
+            if (di_age2(j) == age2(k)) {
+              agst_a2(k) = 1;
+              agst_a3(k) = 1;
+            } else {
+              agst_a2(k) = 0;
+              agst_a3(k) = 0;
+            }
+          }
+        }
+        if (sum(agst_a3) == 0) {
+          throw Rcpp::exception("Ages in density frame do not match stageframe.", false);
+        }
+        if (sum(agst_a2) == 0) {
+          throw Rcpp::exception("Ages in density frame do not match stageframe.", false);
+        }
+        
+        arma::uvec find_agst_s3 = find(agst_s3);
+        arma::uvec find_agst_s2 = find(agst_s2);
+        arma::uvec find_agst_a3 = find(agst_a3);
+        arma::uvec find_agst_a2 = find(agst_a2);
+        
+        arma::uvec pop_32 = intersect(find_agst_s3, find_agst_a3);
+        arma::uvec pop_21 = intersect(find_agst_s2, find_agst_a2);
+        
+        if (static_cast<int>(pop_32.n_elem) == 0 || static_cast<int>(pop_21.n_elem) == 0) {
+          throw Rcpp::exception("Some age-stages in argument density could not be found.", 
+            false);
+        }
+        di_s3a3_id(j) = pop_32(0);
+        di_s2a2_id(j) = pop_21(0);
+        di_index(j) = pop_32(0) + (pop_21(0) * agst_size);
+        
+        agst_s3.zeros();
+        agst_s2.zeros();
+        agst_a3.zeros();
+        agst_a2.zeros();
+      }
+      
+      dens_index = Rcpp::List::create(_["index32"] = di_s3a3_id,
+        _["index21"] = di_s2a2_id, _["index321"] = di_index);
+      
+    } else {
+      // Rcout << "density_prep J" << endl;
+      
+      StringVector stage3 = as<StringVector>(stageframe["stage"]);
+      StringVector stage2 = as<StringVector>(stageframe["stage"]);
+      int ahst_size = static_cast<int>(stage3.length());
+      if (funcbased) {
+        bool found_Dead {false};
+        for (int m = 0; m < ahst_size; m++) {
+          if (stage3(m) == "Dead") found_Dead = true;
+        }
+        if (found_Dead) ahst_size--;
+      }
+      
+      arma::uvec ahst_3(ahst_size, fill::zeros);
+      arma::uvec ahst_2(ahst_size, fill::zeros);
+      
+      arma::uvec di_stage32_id(di_size, fill::zeros);
+      arma::uvec di_stage21_id(di_size, fill::zeros);
+      arma::uvec di_index(di_size, fill::zeros);
+      
+      for (int j = 0; j < di_size; j++) { // Loop through each density_input
+        for (int k = 0; k < ahst_size; k++) {
+          if (di_stage3(j) == stage3(k)) {
+            ahst_3(k) = 1;
+          } else {
+            ahst_3(k) = 0;
+          }
+        }
+        if (sum(ahst_3) == 0) {
+          throw Rcpp::exception("Stages in density frame do not match stageframe.", false);
+        }
+        
+        for (int k = 0; k < ahst_size; k++) {
+          if (di_stage2(j) == stage2(k)) {
+            ahst_2(k) = 1;
+          } else {
+            ahst_2(k) = 0;
+          }
+        }
+        if (sum(ahst_2) == 0) {
+          throw Rcpp::exception("Stages in density frame do not match stageframe.", false);
+        }
+        
+        arma::uvec find_ahst3 = find(ahst_3);
+        arma::uvec find_ahst2 = find(ahst_2);
+        di_stage32_id(j) = find_ahst3(0);
+        di_stage21_id(j) = find_ahst2(0);
+        di_index(j) = find_ahst3(0) + (find_ahst2(0) * ahst_size);
+        
+        ahst_3.zeros();
+        ahst_2.zeros();
+      }
+      
+      dens_index = Rcpp::List::create(_["index3"] = di_stage32_id,
+        _["index2"] = di_stage21_id, _["index321"] = di_index);
+    }
+    
+    // Rcout << "density_prep K" << endl;
+    
+    dyn_style = as<arma::uvec>(dens_input["style"]);
+    dyn_alpha = as<arma::vec>(dens_input["alpha"]);
+    dyn_beta = as<arma::vec>(dens_input["beta"]);
+    dyn_gamma = as<arma::vec>(dens_input["gamma"]);
+    
+    // Rcout << "density_prep L" << endl;
+    
+    for (int i = 0; i < static_cast<int>(dyn_style.n_elem); i++) {
+      if (dyn_style(i) < 1 || dyn_style(i) > 6) pop_error("density inputs", "", "", 21);
+      
+      if (dyn_style(i) == 1) {
+        if (dyn_beta(i) > exp_tol) {
+          Rf_warningcall(R_NilValue,
+            "Beta used in Ricker function may be too high. Results may be unpredictable.");
+          
+        } else if (dyn_beta(i) < (-1.0 * exp_tol)) {
+          Rf_warningcall(R_NilValue,
+            "Beta used in Ricker function may be too high. Results may be unpredictable.");
+          
+        }
+        
+      } else if (dyn_style(i) == 3) {
+        double summed_stuff = dyn_alpha(i) + dyn_beta(i);
+        
+        if (summed_stuff > exp_tol) {
+          Rf_warningcall(R_NilValue,
+            "Alpha and beta used in Usher function may be too high. Results may be unpredictable.");
+          
+        } else if (summed_stuff < (-1.0 * exp_tol)) {
+          Rf_warningcall(R_NilValue,
+            "Alpha and beta used in Usher function may be too high. Results may be unpredictable.");
+        }
+      }
+    }
+  }
+  
+  //' Create New Supplements List With Old Supplements Input and New Data Frame
+  //' 
+  //' Function \code{supplements_replacer()} is used in function
+  //' \code{batch_project3()} to replace the supplement associated with the MPM
+  //' being modified with a new, updated supplemental data frame.
+  //' 
+  //' @name supplements_replacer
+  //' 
+  //' @param old_supplements The Nullable RObject supplement list as input by the
+  //' user.
+  //' @param new_supplement A single new supplement of class data frame.
+  //' @param current_mpm The C++ index of the current MPM with argument
+  //' \code{mpms}.
+  //' @param total_mpms The total number of mpms input in argument \code{mpms}.
+  //' 
+  //' @return A Nullable RObject holding a list of supplements, with some possibly
+  //' being \code{NULL} elements.
+  //' 
+  //' @keywords internal
+  //' @noRd
+  inline Nullable<RObject> supplements_replacer (Nullable<RObject> old_supplements,
+    DataFrame new_supplement, int current_mpm, int total_mpms) {
+    
+    Nullable<RObject> cloned_supplements;
+    
+    CharacterVector new_supplement_class = as<CharacterVector>(new_supplement.attr("class"));
+    bool found_lefkoSD {false};
+    
+    for (int i = 0; i < static_cast<int>(new_supplement_class.length()); i++) {
+      if (new_supplement_class(i) == "lefkoSD") found_lefkoSD = true;
+    }
+    
+    if (!found_lefkoSD) {
+      CharacterVector new_classes = {"data.frame", "lefkoSD"};
+      new_supplement.attr("class") = new_classes;
+    }
+    
+    if (old_supplements.isNotNull()) {
+      cloned_supplements = clone(old_supplements);
+      RObject cloned_supplements_RO = RObject(cloned_supplements);
+      List cloned_supplements_list = as<List>(cloned_supplements_RO);
+      
+      cloned_supplements_list(current_mpm) = new_supplement;
+      cloned_supplements = as<Nullable<RObject>>(cloned_supplements_list);
+    } else {
+      List new_supplement_list (total_mpms);
+      new_supplement_list(current_mpm) = new_supplement;
+      
+      cloned_supplements = as<Nullable<RObject>>(new_supplement_list);
+    }
+    
+    return cloned_supplements;
+  }
+  
+  //' Update Leslie MPM Info for VRM Input with Stageframe
+  //' 
+  //' This function takes stageframe information supplied by the user in cases in
+  //' which a function-based Leslie MPM is called for, and makes all related
+  //' age-based information consistent.
+  //' 
+  //' @name leslie_stageframe_updater
+  //' 
+  //' @param firstage_vec An integer vector giving the first age to be used in
+  //' the Leslie MPM. Also includes values for other MPMs that are not
+  //' necessarily Leslie.
+  //' @param finalage_vec An integer vector giving the final age to be used in
+  //' the Leslie MPM. Also includes values for other MPMs that are not
+  //' necessarily Leslie.
+  //' @param fecage_min_vec An integer vector giving the first age of
+  //' reproduction to be used in the Leslie MPM. Also includes values for other
+  //' MPMs that are not necessarily Leslie.
+  //' @param fecage_max_vec An integer vector giving the final age of
+  //' reproduction to be used in the Leslie MPM. Also includes values for other
+  //' MPMs that are not necessarily Leslie.
+  //' @param cont_vec An integer vector describing whether each Leslie MPM
+  //' includes a transition back to the final age.
+  //' @param imported_stageframe The user-input stageframe, if given.
+  //' @param index An integer value giving the index of the element in each
+  //' vector to be used and adjusted by this function.
+  //' 
+  //' @return This function updates the first five parameters by reference.
+  //' 
+  //' @keywords internal
+  //' @noRd
+  inline void leslie_stageframe_updater (IntegerVector& firstage_vec,
+    IntegerVector& finalage_vec, IntegerVector& fecage_min_vec,
+    IntegerVector& fecage_max_vec, IntegerVector& cont_vec,
+    DataFrame imported_stageframe, int index) {
+    
+    // Rcout << "Entered leslie_stageframe_updater" << endl;
+    
+    CharacterVector sf_stage = as<CharacterVector>(imported_stageframe["stage"]);
+    IntegerVector sf_min_age = as<IntegerVector>(imported_stageframe["min_age"]);
+    IntegerVector sf_max_age = as<IntegerVector>(imported_stageframe["max_age"]);
+    
+    // Rcout << "sf_stage: " << sf_stage << endl;
+    // Rcout << "sf_min_age: " << sf_min_age << endl;
+    // Rcout << "sf_max_age: " << sf_max_age << endl;
+    
+    int stageframe_length = static_cast<int>(sf_stage.length());
+    
+    int tracked_min_age {0};
+    int tracked_max_age {0};
+    int good_min_age_values {0};
+    int good_max_age_values {0};
+    
+    for (int i = 0; i < stageframe_length; i++) {
+      if (!IntegerVector::is_na(sf_min_age(i))) {
+        if (i == 0) {
+          tracked_min_age = sf_min_age(i);
+          tracked_max_age = tracked_min_age;
+          good_min_age_values++;
+        } else {
+          if (sf_min_age(i) == (tracked_min_age + 1)) {
+            tracked_min_age++;
+            tracked_max_age = tracked_min_age;
+            good_min_age_values++;
+          }
+        }
+      }
+      
+      if (!IntegerVector::is_na(sf_max_age(i))) {
+        if (i == 0) {
+          tracked_max_age = sf_max_age(i);
+          good_max_age_values++;
+        } else {
+          if (sf_max_age(i) == (tracked_max_age + 1)) {
+            tracked_max_age++;
+            good_max_age_values++;
+          }
+        }
+      }
+    }
+    
+    if (good_min_age_values == stageframe_length) {
+      firstage_vec(index) = min(sf_min_age);
+      finalage_vec(index) = tracked_max_age;
+    }
+  }
 }
 
 #endif
