@@ -1,8 +1,8 @@
 Package: adapt3
 Type: Package
 Title: Adaptive Dynamics and Community Matrix Model Projections
-Version: 2.0.0
-Date: 2026-02-09
+Version: 2.0.7
+Date: 2026-02-12
 Authors@R: c(person(given = "Richard P.", family = "Shefferson",
              email = "cdorm@g.ecc.u-tokyo.ac.jp", role = c("aut", "cre"),
              comment=c(ORCID="0000-0002-5234-3131")))
@@ -20,13 +20,13 @@ LinkingTo: Rcpp, RcppArmadillo, BH, lefko3
 LazyData: true
 BugReports: https://github.com/dormancy1/adapt3/issues
 RoxygenNote: 7.3.3
-Suggests: knitr, rmarkdown
+Suggests: knitr, rmarkdown, testthat
 VignetteBuilder: knitr, rmarkdown
 NeedsCompilation: yes
-Packaged: 2026-02-09 09:08:49 UTC; richpshefferson
+Packaged: 2026-02-12 11:07:13 UTC; richpshefferson
 Author: Richard P. Shefferson [aut, cre] (ORCID:
     <https://orcid.org/0000-0002-5234-3131>)
 Maintainer: Richard P. Shefferson <cdorm@g.ecc.u-tokyo.ac.jp>
 Depends: R (>= 3.5.0)
 Repository: CRAN
-Date/Publication: 2026-02-09 20:50:07 UTC
+Date/Publication: 2026-02-13 10:00:02 UTC

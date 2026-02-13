@@ -1,3 +1,19 @@
+# adapt3 2.0.7 (2026-02-12)
+
+## NEW FEATURES
+
+* A benchmark option has been added to functions project3(), invade3(), and
+  batch_project3().
+
+* Unit tests added.
+
+## BUG FIXES
+
+* Processing of age-related parameters in batch projection of Leslie MPMs fixed.
+
+* Processing of supplements in batch_project3() no longer leads to an occasional
+  memory leak.
+
 # adapt3 2.0.0 (2026-02-09)
 
 ## NEW FEATURES
