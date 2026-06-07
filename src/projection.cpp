@@ -866,15 +866,20 @@ Rcpp::List cleanup3(Nullable<RObject> mpms = R_NilValue,
     
     for (int i = 0; i < vrm_count; i++) {
       DataFrame chosen_stageframe;
-      
-      RObject supp_trial = RObject(supplement_list_fb(i));
       DataFrame chosen_supplement;
-      bool trial_supp_null {false};
+      bool trial_supp_null {true};
       
-      if (is<DataFrame>(supp_trial)) {
-        chosen_supplement = as<DataFrame>(supplement_list_fb(i));
-      } else {
-        trial_supp_null = true;
+      Nullable<RObject> supp_trial_N = as<Nullable<RObject>>(supplement_list_fb(i));
+      
+      if (supp_trial_N.isNotNull()) {
+        RObject supp_trial = RObject(supp_trial_N);
+        
+        if (is<DataFrame>(supp_trial)) {
+          chosen_supplement = as<DataFrame>(supp_trial);
+          trial_supp_null = false;
+        } else {
+          trial_supp_null = true;
+        }
       }
       
       if (format_vec(i) < 5) {
@@ -2227,7 +2232,7 @@ Rcpp::List cleanup3(Nullable<RObject> mpms = R_NilValue,
       
       for (int i = 0; i < equivalence_count; i++) {
         if (is<NumericVector>(equivalence_list_temp(i))) {
-          NumericVector trial_equivalence = as<NumericVector>(equivalence_list(i));
+          NumericVector trial_equivalence = as<NumericVector>(equivalence_list_temp(i));
           int trial_eq_length = static_cast<int>(trial_equivalence.length());
           
           if (trial_eq_length != matrowcounts(i)) {
@@ -5774,6 +5779,12 @@ void project3_fb_core (NumericMatrix& agg_density, List& N_out, List& comm_out,
 //' limit for the number of matrices required per MPM in order to create
 //' matrices prior to projection.
 //' 
+//' Please note that function-based Leslie MPMs cannot be forced through
+//' Lefkovitch-style MPM processing via the \code{format} argument. Attempting
+//' to do so will yield NA values within the projected matrices, which may then
+//' propagate further NA values in other matrices via density dependence
+//' functions. Always use \code{format = 5} for Leslie MPMs.
+//' 
 //' @examples
 //' library(lefko3)
 //' data(cypdata)
@@ -6144,22 +6155,23 @@ List project3 (Nullable<RObject> mpms  = R_NilValue,
   
   if (err_check_extreme) {
     
-    List output_errcheck (10);
+    List output_errcheck (11);
     output_errcheck(0) = allstages_all;
     output_errcheck(1) = allmodels_all;
-    output_errcheck(2) = equivalence_list;
-    output_errcheck(3) = density_list;
-    output_errcheck(4) = dens_index_list;
-    output_errcheck(5) = density_vr_list;
-    output_errcheck(6) = final_out_matrices;
-    output_errcheck(7) = extreme_mpm_out;
-    output_errcheck(8) = err_check_mat_indices;
-    output_errcheck(9) = err_check_theoldpizzle_adapt3;
+    output_errcheck(2) = supplement_list;
+    output_errcheck(3) = equivalence_list;
+    output_errcheck(4) = density_list;
+    output_errcheck(5) = dens_index_list;
+    output_errcheck(6) = density_vr_list;
+    output_errcheck(7) = final_out_matrices;
+    output_errcheck(8) = extreme_mpm_out;
+    output_errcheck(9) = err_check_mat_indices;
+    output_errcheck(10) = err_check_theoldpizzle_adapt3;
     
     CharacterVector output_errcheck_names = {"allstages_all", "allmodels_all",
-      "equivalence_list", "density_list", "dens_index_list", "density_vr_list",
-      "fb_mpm_out_matrices", "modified_mpms", "post_processing_index_vectors",
-      "post_processing_supp_frame"};
+      "supplement_list", "equivalence_list", "density_list", "dens_index_list",
+      "density_vr_list", "fb_mpm_out_matrices", "modified_mpms",
+      "post_processing_index_vectors", "post_processing_supp_frame"};
     output_errcheck.attr("names") = output_errcheck_names;
     
     output(7) = output_errcheck;
@@ -6441,6 +6453,7 @@ List project3 (Nullable<RObject> mpms  = R_NilValue,
 //' order to make them more tractable.
 //' 
 //' @examples
+//' \donttest{
 //' library(lefko3)
 //' data(cypdata)
 //' 
@@ -6552,6 +6565,7 @@ List project3 (Nullable<RObject> mpms  = R_NilValue,
 //' aaa1_prj_batch2 <- batch_project3(used_mpms = "all", all_elems = FALSE,
 //'   mpms =  cyp_mpms1, entry_time = c(0, 5, 8), times = 15, nreps = 3,
 //'   supplement = used_supplements, integeronly = TRUE, density = cyp_density)
+//' }
 //' 
 //' @export batch_project3
 // [[Rcpp::export(batch_project3)]]
@@ -6849,7 +6863,7 @@ Rcpp::List batch_project3 (Nullable<RObject> used_mpms = R_NilValue,
     if (using_vrms) {
       if (stageframes.isNotNull()) {
         RObject stageframes_true = RObject(stageframes);
-        List stageframes_list = as<List>(stageframes);
+        List stageframes_list = as<List>(stageframes_true);
         current_stageframe = as<DataFrame>(stageframes_list(current_mpm_int));
       }
       
@@ -8083,6 +8097,11 @@ Rcpp::List batch_project3 (Nullable<RObject> used_mpms = R_NilValue,
           
           DataFrame used_supplement = clone(current_supplement_df);
           
+          AdaptUtils::batch_supplement_alterator (used_supplement, givenrate_vec,
+            offset_vec, multiplier_vec, givenrate_used, offset_used,
+            multiplier_used, try1);
+          
+          /*
           if (givenrate_used) {
             NumericVector givenrate_new = rep(givenrate_vec(try1), current_supplement_rows);
             used_supplement["givenrate"] = givenrate_new;
@@ -8093,7 +8112,7 @@ Rcpp::List batch_project3 (Nullable<RObject> used_mpms = R_NilValue,
             NumericVector multiplier_new = rep(multiplier_vec(try1), current_supplement_rows);
             used_supplement["multiplier"] = multiplier_new;
           }
-          
+          */
           arma::ivec used_convtype = as<arma::ivec>(used_supplement["convtype"]);
           arma::uvec used_convtype_toosmall = find(used_convtype < 1);
           arma::uvec used_convtype_toolarge = find(used_convtype > 3);
@@ -19751,6 +19770,7 @@ void invade3_fb_core (DataFrame& Lyapunov, DataFrame& Lyapunov_optim,
 //' than the original values.
 //' 
 //' @examples
+//' \donttest{
 //' library(lefko3)
 //' data(cypdata)
 //' 
@@ -19815,6 +19835,7 @@ void invade3_fb_core (DataFrame& Lyapunov, DataFrame& Lyapunov_optim,
 //'   starts = cyp_start, entry_time = c(0, 250), fitness_times = 30,
 //'   var_per_run = 2)
 //' plot(cyp_inv)
+//' }
 //' 
 //' @export invade3
 // [[Rcpp::export(invade3)]]

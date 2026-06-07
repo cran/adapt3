@@ -1,3 +1,27 @@
+# adapt3 2.X\0.9 (2026-06-07)
+
+## USER-VISIBLE CHANGES
+
+* Citation updated.
+
+* More unit tests for function-based projections added.
+
+## BUG FIXES
+
+* Fixed bug leading to loss of offset values in supplements passed to function
+  batch_project3() when projecting function-based MPMs.
+  
+* Fixed fatal error occurring with function-based Leslie MPMs when using
+  supplements.
+  
+* Unit test bugs fixed.
+
+# adapt3 2.0.8 (2026-02-12)
+
+## BUG FIXES
+
+* Cleared up potential memory leak in function-based application of project3().
+
 # adapt3 2.0.7 (2026-02-12)
 
 ## NEW FEATURES
